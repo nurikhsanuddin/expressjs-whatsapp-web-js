@@ -8,7 +8,8 @@
 
   <div class="section">
     <h2>📦 Installasi</h2>
-    <pre><code>npm install express dotenv multer whatsapp-web.js qrcode-terminal puppeteer</code></pre>
+    <pre><code>npm install -g pnpm</code></pre>
+    <pre><code>pnpm install</code></pre>
   </div>
 
   <div class="section">
