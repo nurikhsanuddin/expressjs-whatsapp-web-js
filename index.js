@@ -1330,21 +1330,49 @@ const monitorResources = () => {
               let attemptName;
 
               if (isImage) {
-                // Images need special handling - use MessageMedia.fromFilePath for better compatibility
+                // Images need special handling - try multiple approaches
                 attemptName = "Image optimized send";
-                timeout = 30000; // Shorter timeout for images
+                timeout = 25000; // Reduced timeout for images
 
                 console.log(
-                  "🖼️ Image detected - using optimized image handling"
+                  "🖼️ Image detected - using experimental image handling"
                 );
 
-                // For images, try using fromFilePath method if file exists on disk
-                if (req.file.path && fs.existsSync(req.file.path)) {
-                  console.log("📂 Using fromFilePath for image");
-                  mediaToSend = MessageMedia.fromFilePath(req.file.path);
-                } else {
-                  // Fallback to buffer with image-specific optimizations
-                  console.log("💾 Using buffer for image with optimizations");
+                // Experimental approach 1: Save to temp file and use fromFilePath
+                let tempFilePath = null;
+                try {
+                  const tempDir = require("os").tmpdir();
+                  const tempFileName = `wa_temp_${Date.now()}_${req.file.originalname.replace(
+                    /[^a-zA-Z0-9.-]/g,
+                    "_"
+                  )}`;
+                  tempFilePath = path.join(tempDir, tempFileName);
+
+                  console.log(
+                    "💾 Creating temporary file for image:",
+                    tempFilePath
+                  );
+                  fs.writeFileSync(tempFilePath, req.file.buffer);
+
+                  console.log(
+                    "📂 Using MessageMedia.fromFilePath for better compatibility"
+                  );
+                  mediaToSend = MessageMedia.fromFilePath(tempFilePath);
+                } catch (tempError) {
+                  console.warn(
+                    "⚠️ Temp file approach failed, falling back to buffer:",
+                    tempError.message
+                  );
+
+                  // Cleanup temp file if it was created
+                  if (tempFilePath && fs.existsSync(tempFilePath)) {
+                    try {
+                      fs.unlinkSync(tempFilePath);
+                    } catch (e) {}
+                  }
+
+                  // Fallback to optimized buffer approach
+                  console.log("💾 Using optimized buffer approach for image");
 
                   // Ensure proper MIME type for images
                   let imageMimeType = req.file.mimetype;
@@ -1363,11 +1391,23 @@ const monitorResources = () => {
                     else if (ext === ".webp") imageMimeType = "image/webp";
                   }
 
+                  // Try smaller filename and ensure clean base64
+                  const cleanFilename =
+                    req.file.originalname.length > 50
+                      ? req.file.originalname.substring(0, 47) +
+                        path.extname(req.file.originalname)
+                      : req.file.originalname;
+
                   mediaToSend = new MessageMedia(
                     imageMimeType,
                     req.file.buffer.toString("base64"),
-                    req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_") // Clean filename
+                    cleanFilename.replace(/[^a-zA-Z0-9.-]/g, "_")
                   );
+                }
+
+                // Store temp file path for cleanup later
+                if (tempFilePath && fs.existsSync(tempFilePath)) {
+                  res.locals.tempFilePath = tempFilePath;
                 }
               } else if (isPDF) {
                 // PDFs work well with standard approach
@@ -1419,20 +1459,79 @@ const monitorResources = () => {
                   let retryTimeout;
 
                   if (isImage) {
-                    // For images, try minimal approach
-                    console.log("🖼️ Image retry: Minimal approach");
-                    retryTimeout = 15000; // Very short timeout for images
+                    // For images, try different experimental approaches
+                    console.log("🖼️ Image retry: Experimental approaches");
+                    retryTimeout = 12000; // Very short timeout for images
 
-                    // Strip any metadata and use minimal data
-                    const cleanBase64 = req.file.buffer
-                      .toString("base64")
-                      .replace(/[^A-Za-z0-9+/=]/g, "");
+                    // Approach 1: Try with smaller image and no filename
+                    console.log("🔬 Experiment 1: Minimal image data");
                     retryMedia = new MessageMedia(
-                      req.file.mimetype,
-                      cleanBase64,
-                      req.file.originalname.substring(0, 20) +
-                        path.extname(req.file.originalname)
+                      "image/png", // Force PNG type regardless of original
+                      req.file.buffer.toString("base64"),
+                      undefined // No filename
                     );
+
+                    try {
+                      sent = await sendWithTimeout(
+                        client,
+                        to,
+                        retryMedia,
+                        8000
+                      );
+                      console.log(
+                        "✅ Experiment 1 success:",
+                        sent.id._serialized
+                      );
+                    } catch (exp1Error) {
+                      console.log(
+                        "❌ Experiment 1 failed, trying experiment 2"
+                      );
+
+                      // Approach 2: Try with JPEG conversion simulation
+                      console.log("🔬 Experiment 2: Force JPEG type");
+                      retryMedia = new MessageMedia(
+                        "image/jpeg", // Force JPEG type
+                        req.file.buffer.toString("base64"),
+                        "image.jpg" // Simple filename
+                      );
+
+                      try {
+                        sent = await sendWithTimeout(
+                          client,
+                          to,
+                          retryMedia,
+                          8000
+                        );
+                        console.log(
+                          "✅ Experiment 2 success:",
+                          sent.id._serialized
+                        );
+                      } catch (exp2Error) {
+                        console.log(
+                          "❌ Experiment 2 failed, trying experiment 3"
+                        );
+
+                        // Approach 3: Try sending without any media properties optimization
+                        console.log(
+                          "🔬 Experiment 3: Raw approach with short timeout"
+                        );
+                        const rawMedia = new MessageMedia(
+                          req.file.mimetype,
+                          req.file.buffer.toString("base64")
+                        );
+
+                        sent = await sendWithTimeout(
+                          client,
+                          to,
+                          rawMedia,
+                          5000
+                        );
+                        console.log(
+                          "✅ Experiment 3 success:",
+                          sent.id._serialized
+                        );
+                      }
+                    }
                   } else {
                     // For non-images, try reduced size
                     console.log("📄 Non-image retry: Reduced approach");
@@ -1443,18 +1542,11 @@ const monitorResources = () => {
                       req.file.buffer.toString("base64"),
                       req.file.originalname.substring(0, 50)
                     );
+                    console.log(
+                      "✅ Retry berhasil dengan ID:",
+                      sent.id._serialized
+                    );
                   }
-
-                  sent = await sendWithTimeout(
-                    client,
-                    to,
-                    retryMedia,
-                    retryTimeout
-                  );
-                  console.log(
-                    "✅ Retry berhasil dengan ID:",
-                    sent.id._serialized
-                  );
                 } catch (retryError) {
                   console.error("❌ Retry juga gagal:", retryError.message);
 
@@ -1528,6 +1620,25 @@ const monitorResources = () => {
           };
 
           console.log("✅ Response:", response);
+
+          // Cleanup temporary files if any were created
+          if (res.locals && res.locals.tempFilePath) {
+            try {
+              if (fs.existsSync(res.locals.tempFilePath)) {
+                fs.unlinkSync(res.locals.tempFilePath);
+                console.log(
+                  "🧹 Cleaned up temporary file:",
+                  res.locals.tempFilePath
+                );
+              }
+            } catch (cleanupError) {
+              console.warn(
+                "⚠️ Failed to cleanup temp file:",
+                cleanupError.message
+              );
+            }
+          }
+
           res.json(response);
         } catch (e) {
           console.error("❌ Error in send-message:", e);
@@ -1573,6 +1684,24 @@ const monitorResources = () => {
             to: null,
             timestamp: new Date().toISOString(),
           });
+        } finally {
+          // Cleanup temporary files if any were created
+          if (res.locals && res.locals.tempFilePath) {
+            try {
+              if (fs.existsSync(res.locals.tempFilePath)) {
+                fs.unlinkSync(res.locals.tempFilePath);
+                console.log(
+                  "🧹 Cleaned up temporary file:",
+                  res.locals.tempFilePath
+                );
+              }
+            } catch (cleanupError) {
+              console.warn(
+                "⚠️ Failed to cleanup temp file:",
+                cleanupError.message
+              );
+            }
+          }
         }
       }
     );
