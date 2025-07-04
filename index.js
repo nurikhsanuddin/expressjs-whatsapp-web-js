@@ -1134,6 +1134,10 @@ const monitorResources = () => {
               req.file.originalname
             );
 
+            // Define file type variables early for use in logging and processing
+            const isImage = req.file.mimetype.startsWith("image/");
+            const isPDF = req.file.mimetype === "application/pdf";
+
             console.log("🔄 Memulai proses pengiriman file ke WhatsApp...");
             console.log("📊 Media info:", {
               type: req.file.mimetype,
@@ -1339,9 +1343,7 @@ const monitorResources = () => {
               });
             };
 
-            // Special handling for different file types
-            const isImage = req.file.mimetype.startsWith("image/");
-            const isPDF = req.file.mimetype === "application/pdf";
+            // Special handling for different file types - variables already declared above
 
             try {
               let mediaToSend;
