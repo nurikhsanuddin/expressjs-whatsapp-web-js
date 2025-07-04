@@ -1320,20 +1320,86 @@ const monitorResources = () => {
               });
             };
 
+            // Special handling for different file types
+            const isImage = req.file.mimetype.startsWith("image/");
+            const isPDF = req.file.mimetype === "application/pdf";
+
             try {
-              // First attempt: Reduce timeout dan optimize media
+              let mediaToSend;
+              let timeout;
+              let attemptName;
+
+              if (isImage) {
+                // Images need special handling - use MessageMedia.fromFilePath for better compatibility
+                attemptName = "Image optimized send";
+                timeout = 30000; // Shorter timeout for images
+
+                console.log(
+                  "🖼️ Image detected - using optimized image handling"
+                );
+
+                // For images, try using fromFilePath method if file exists on disk
+                if (req.file.path && fs.existsSync(req.file.path)) {
+                  console.log("📂 Using fromFilePath for image");
+                  mediaToSend = MessageMedia.fromFilePath(req.file.path);
+                } else {
+                  // Fallback to buffer with image-specific optimizations
+                  console.log("💾 Using buffer for image with optimizations");
+
+                  // Ensure proper MIME type for images
+                  let imageMimeType = req.file.mimetype;
+                  if (
+                    !imageMimeType ||
+                    imageMimeType === "application/octet-stream"
+                  ) {
+                    // Auto-detect based on file extension
+                    const ext = path
+                      .extname(req.file.originalname)
+                      .toLowerCase();
+                    if (ext === ".jpg" || ext === ".jpeg")
+                      imageMimeType = "image/jpeg";
+                    else if (ext === ".png") imageMimeType = "image/png";
+                    else if (ext === ".gif") imageMimeType = "image/gif";
+                    else if (ext === ".webp") imageMimeType = "image/webp";
+                  }
+
+                  mediaToSend = new MessageMedia(
+                    imageMimeType,
+                    req.file.buffer.toString("base64"),
+                    req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_") // Clean filename
+                  );
+                }
+              } else if (isPDF) {
+                // PDFs work well with standard approach
+                attemptName = "PDF optimized send";
+                timeout = 45000;
+
+                console.log("📄 PDF detected - using standard PDF handling");
+                mediaToSend = new MessageMedia(
+                  req.file.mimetype,
+                  req.file.buffer.toString("base64"),
+                  req.file.originalname
+                );
+              } else {
+                // Other file types
+                attemptName = "File optimized send";
+                timeout = 40000;
+
+                console.log("📁 Other file type detected");
+                mediaToSend = new MessageMedia(
+                  req.file.mimetype,
+                  req.file.buffer.toString("base64"),
+                  req.file.originalname
+                );
+              }
+
               console.log(
-                "🎯 Attempt 1: Optimized send dengan timeout 45 detik"
+                `🎯 Attempt 1: ${attemptName} dengan timeout ${
+                  timeout / 1000
+                } detik`
               );
 
-              // Create optimized media object
-              const optimizedMedia = new MessageMedia(
-                media.mimetype,
-                media.data.substring(0, Math.min(media.data.length, 1000000)), // Limit base64 size
-                media.filename || "file"
-              );
-
-              sent = await sendWithTimeout(client, to, optimizedMedia, 45000); // 45 detik
+              sent = await sendWithTimeout(client, to, mediaToSend, timeout);
               console.log(
                 `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
               );
@@ -1346,19 +1412,45 @@ const monitorResources = () => {
                 sendError.message.includes("Timeout") ||
                 sendError.message.includes("hanging")
               ) {
-                console.log(
-                  "🔄 Attempt 2: Mencoba dengan timeout lebih pendek..."
-                );
+                console.log("🔄 Attempt 2: Mencoba approach alternatif...");
 
                 try {
-                  // Approach 2: Much smaller timeout, simpler media
-                  const simpleMedia = new MessageMedia(
-                    req.file.mimetype,
-                    req.file.buffer.toString("base64"),
-                    req.file.originalname.substring(0, 50) // Shorter filename
-                  );
+                  let retryMedia;
+                  let retryTimeout;
 
-                  sent = await sendWithTimeout(client, to, simpleMedia, 20000); // 20 detik saja
+                  if (isImage) {
+                    // For images, try minimal approach
+                    console.log("🖼️ Image retry: Minimal approach");
+                    retryTimeout = 15000; // Very short timeout for images
+
+                    // Strip any metadata and use minimal data
+                    const cleanBase64 = req.file.buffer
+                      .toString("base64")
+                      .replace(/[^A-Za-z0-9+/=]/g, "");
+                    retryMedia = new MessageMedia(
+                      req.file.mimetype,
+                      cleanBase64,
+                      req.file.originalname.substring(0, 20) +
+                        path.extname(req.file.originalname)
+                    );
+                  } else {
+                    // For non-images, try reduced size
+                    console.log("📄 Non-image retry: Reduced approach");
+                    retryTimeout = 25000;
+
+                    retryMedia = new MessageMedia(
+                      req.file.mimetype,
+                      req.file.buffer.toString("base64"),
+                      req.file.originalname.substring(0, 50)
+                    );
+                  }
+
+                  sent = await sendWithTimeout(
+                    client,
+                    to,
+                    retryMedia,
+                    retryTimeout
+                  );
                   console.log(
                     "✅ Retry berhasil dengan ID:",
                     sent.id._serialized
