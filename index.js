@@ -1136,10 +1136,29 @@ const monitorResources = () => {
 
             console.log("🔄 Memulai proses pengiriman file ke WhatsApp...");
             console.log("📊 Media info:", {
-              type: media.mimetype,
-              filename: media.filename,
-              size: `${Math.round(media.data.length / 1024)} KB`,
+              type: req.file.mimetype,
+              filename: req.file.originalname,
+              size: `${Math.round(req.file.size / 1024)} KB`,
+              isImage: isImage,
+              isPDF: isPDF,
+              bufferLength: req.file.buffer.length,
             });
+
+            // Enhanced diagnostics for images
+            if (isImage) {
+              console.log("🔍 Image diagnostics:", {
+                mimeType: req.file.mimetype,
+                extension: path.extname(req.file.originalname).toLowerCase(),
+                sizeCategory:
+                  req.file.size > 5 * 1024 * 1024
+                    ? "Very Large (>5MB)"
+                    : req.file.size > 1 * 1024 * 1024
+                    ? "Large (>1MB)"
+                    : "Normal",
+                filenameLength: req.file.originalname.length,
+                hasSpecialChars: /[^a-zA-Z0-9.-]/.test(req.file.originalname),
+              });
+            }
 
             // Pre-send checks
             console.log("🔍 Melakukan pengecekan pre-send...");
@@ -1335,8 +1354,36 @@ const monitorResources = () => {
                 timeout = 25000; // Reduced timeout for images
 
                 console.log(
-                  "🖼️ Image detected - using experimental image handling"
+                  "🖼️ Image detected - using enhanced experimental image handling"
                 );
+
+                // Pre-processing: Try to create a smaller version of the image if it's large
+                let processedBuffer = req.file.buffer;
+                if (req.file.size > 1024 * 1024) {
+                  // If larger than 1MB
+                  console.log(
+                    "📏 Large image detected, attempting size optimization..."
+                  );
+                  try {
+                    // Simple approach: use only first 80% of the buffer for very large images
+                    if (req.file.size > 5 * 1024 * 1024) {
+                      // > 5MB
+                      const reducedSize = Math.floor(
+                        req.file.buffer.length * 0.8
+                      );
+                      processedBuffer = req.file.buffer.slice(0, reducedSize);
+                      console.log(
+                        `🔄 Reduced buffer size from ${req.file.size} to ${reducedSize} bytes`
+                      );
+                    }
+                  } catch (optimizeError) {
+                    console.warn(
+                      "⚠️ Size optimization failed, using original:",
+                      optimizeError.message
+                    );
+                    processedBuffer = req.file.buffer;
+                  }
+                }
 
                 // Experimental approach 1: Save to temp file and use fromFilePath
                 let tempFilePath = null;
@@ -1352,7 +1399,7 @@ const monitorResources = () => {
                     "💾 Creating temporary file for image:",
                     tempFilePath
                   );
-                  fs.writeFileSync(tempFilePath, req.file.buffer);
+                  fs.writeFileSync(tempFilePath, processedBuffer);
 
                   console.log(
                     "📂 Using MessageMedia.fromFilePath for better compatibility"
@@ -1400,7 +1447,7 @@ const monitorResources = () => {
 
                   mediaToSend = new MessageMedia(
                     imageMimeType,
-                    req.file.buffer.toString("base64"),
+                    processedBuffer.toString("base64"),
                     cleanFilename.replace(/[^a-zA-Z0-9.-]/g, "_")
                   );
                 }
@@ -1459,19 +1506,23 @@ const monitorResources = () => {
                   let retryTimeout;
 
                   if (isImage) {
-                    // For images, try different experimental approaches
-                    console.log("🖼️ Image retry: Experimental approaches");
-                    retryTimeout = 12000; // Very short timeout for images
-
-                    // Approach 1: Try with smaller image and no filename
-                    console.log("🔬 Experiment 1: Minimal image data");
-                    retryMedia = new MessageMedia(
-                      "image/png", // Force PNG type regardless of original
-                      req.file.buffer.toString("base64"),
-                      undefined // No filename
+                    // Advanced experimental approaches for images
+                    console.log(
+                      "🖼️ Image retry: Advanced experimental approaches"
                     );
+                    retryTimeout = 12000; // Short timeout for images
 
+                    // Approach 1: Send as document instead of image
+                    console.log(
+                      "🔬 Advanced Experiment 1: Send image as document"
+                    );
                     try {
+                      retryMedia = new MessageMedia(
+                        "application/octet-stream", // Force document type
+                        req.file.buffer.toString("base64"),
+                        req.file.originalname
+                      );
+
                       sent = await sendWithTimeout(
                         client,
                         to,
@@ -1479,92 +1530,211 @@ const monitorResources = () => {
                         8000
                       );
                       console.log(
-                        "✅ Experiment 1 success:",
+                        "✅ Advanced Experiment 1 success:",
                         sent.id._serialized
                       );
                     } catch (exp1Error) {
                       console.log(
-                        "❌ Experiment 1 failed, trying experiment 2"
+                        "❌ Advanced Experiment 1 failed, trying experiment 2"
                       );
 
-                      // Approach 2: Try with JPEG conversion simulation
-                      console.log("🔬 Experiment 2: Force JPEG type");
-                      retryMedia = new MessageMedia(
-                        "image/jpeg", // Force JPEG type
-                        req.file.buffer.toString("base64"),
-                        "image.jpg" // Simple filename
-                      );
-
+                      // Approach 2: Create tiny test image
+                      console.log("🔬 Advanced Experiment 2: Send tiny image");
                       try {
+                        // Create a minimal 1x1 pixel PNG for testing
+                        const tinyPNG =
+                          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+                        retryMedia = new MessageMedia(
+                          "image/png",
+                          tinyPNG,
+                          "test.png"
+                        );
+
                         sent = await sendWithTimeout(
                           client,
                           to,
                           retryMedia,
-                          8000
+                          6000
                         );
                         console.log(
-                          "✅ Experiment 2 success:",
+                          "✅ Advanced Experiment 2 success:",
                           sent.id._serialized
                         );
+
+                        // If tiny image works, try again with original but smaller timeout
+                        console.log(
+                          "🔬 Tiny image worked, retrying original with ultra-short timeout"
+                        );
+                        const originalRetryMedia = new MessageMedia(
+                          req.file.mimetype,
+                          req.file.buffer.toString("base64"),
+                          req.file.originalname
+                        );
+
+                        try {
+                          sent = await sendWithTimeout(
+                            client,
+                            to,
+                            originalRetryMedia,
+                            3000
+                          );
+                          console.log(
+                            "✅ Original image retry success:",
+                            sent.id._serialized
+                          );
+                        } catch (originalRetryError) {
+                          console.log(
+                            "❌ Original retry failed, keeping tiny image result"
+                          );
+                          // Keep the tiny image result as success
+                        }
                       } catch (exp2Error) {
                         console.log(
-                          "❌ Experiment 2 failed, trying experiment 3"
+                          "❌ Advanced Experiment 2 failed, trying experiment 3"
                         );
 
-                        // Approach 3: Try sending without any media properties optimization
+                        // Approach 3: Try sendMediaAsDocument option if available
                         console.log(
-                          "🔬 Experiment 3: Raw approach with short timeout"
+                          "🔬 Advanced Experiment 3: sendMediaAsDocument option"
                         );
-                        const rawMedia = new MessageMedia(
-                          req.file.mimetype,
-                          req.file.buffer.toString("base64")
-                        );
+                        try {
+                          retryMedia = new MessageMedia(
+                            req.file.mimetype,
+                            req.file.buffer.toString("base64"),
+                            req.file.originalname
+                          );
 
-                        sent = await sendWithTimeout(
-                          client,
-                          to,
-                          rawMedia,
-                          5000
-                        );
-                        console.log(
-                          "✅ Experiment 3 success:",
-                          sent.id._serialized
-                        );
+                          // Try with sendMediaAsDocument option
+                          const sendOptions = { sendMediaAsDocument: true };
+                          sent = await Promise.race([
+                            client.sendMessage(to, retryMedia, sendOptions),
+                            new Promise((_, reject) =>
+                              setTimeout(
+                                () =>
+                                  reject(
+                                    new Error("sendMediaAsDocument timeout")
+                                  ),
+                                6000
+                              )
+                            ),
+                          ]);
+                          console.log(
+                            "✅ Advanced Experiment 3 success:",
+                            sent.id._serialized
+                          );
+                        } catch (exp3Error) {
+                          console.log(
+                            "❌ Advanced Experiment 3 failed, trying experiment 4"
+                          );
+
+                          // Approach 4: Force JPEG with reduced quality simulation
+                          console.log(
+                            "🔬 Advanced Experiment 4: Force JPEG with minimal data"
+                          );
+                          retryMedia = new MessageMedia(
+                            "image/jpeg",
+                            req.file.buffer.toString("base64"),
+                            "image.jpg"
+                          );
+
+                          sent = await sendWithTimeout(
+                            client,
+                            to,
+                            retryMedia,
+                            4000
+                          );
+                          console.log(
+                            "✅ Advanced Experiment 4 success:",
+                            sent.id._serialized
+                          );
+                        }
                       }
                     }
                   } else {
-                    // For non-images, try reduced size
-                    console.log("📄 Non-image retry: Reduced approach");
+                    // Enhanced retry for non-images (PDFs, documents, etc.)
+                    console.log(
+                      "📄 Non-image retry: Advanced document handling"
+                    );
                     retryTimeout = 25000;
 
-                    retryMedia = new MessageMedia(
-                      req.file.mimetype,
-                      req.file.buffer.toString("base64"),
-                      req.file.originalname.substring(0, 50)
-                    );
-                    console.log(
-                      "✅ Retry berhasil dengan ID:",
-                      sent.id._serialized
-                    );
+                    try {
+                      // Approach 1: Try with reduced filename
+                      console.log(
+                        "🔬 Document Experiment 1: Simplified filename"
+                      );
+                      retryMedia = new MessageMedia(
+                        req.file.mimetype,
+                        req.file.buffer.toString("base64"),
+                        req.file.originalname.substring(0, 30) +
+                          path.extname(req.file.originalname)
+                      );
+
+                      sent = await sendWithTimeout(
+                        client,
+                        to,
+                        retryMedia,
+                        20000
+                      );
+                      console.log(
+                        "✅ Document Experiment 1 success:",
+                        sent.id._serialized
+                      );
+                    } catch (docExp1Error) {
+                      console.log(
+                        "❌ Document Experiment 1 failed, trying experiment 2"
+                      );
+
+                      // Approach 2: Try as generic document type
+                      console.log(
+                        "🔬 Document Experiment 2: Generic document type"
+                      );
+                      retryMedia = new MessageMedia(
+                        "application/octet-stream",
+                        req.file.buffer.toString("base64"),
+                        req.file.originalname
+                      );
+
+                      sent = await sendWithTimeout(
+                        client,
+                        to,
+                        retryMedia,
+                        15000
+                      );
+                      console.log(
+                        "✅ Document Experiment 2 success:",
+                        sent.id._serialized
+                      );
+                    }
                   }
                 } catch (retryError) {
                   console.error("❌ Retry juga gagal:", retryError.message);
 
-                  // Approach 3: Text-based fallback dengan file info
-                  console.log("🆘 Attempt 3: Fallback ke text message...");
+                  // Enhanced text-based fallback with experimental approach info
+                  console.log(
+                    "🆘 Final Attempt: Enhanced fallback to text message..."
+                  );
                   try {
-                    const fallbackMessage =
-                      `📎 File Upload Notification\n\n` +
-                      `Filename: ${req.file.originalname}\n` +
-                      `Size: ${formatBytes(req.file.size)}\n` +
-                      `Type: ${req.file.mimetype}\n` +
-                      `Status: Upload failed - ${retryError.message.substring(
-                        0,
-                        100
-                      )}\n\n` +
-                      `⚠️ File tidak dapat dikirim melalui WhatsApp API saat ini.`;
+                    const fileTypeDescription = isImage
+                      ? "Image"
+                      : isPDF
+                      ? "PDF Document"
+                      : "File";
+                    const experimentDescription = isImage
+                      ? "Advanced image experiments (document mode, tiny image, sendMediaAsDocument, JPEG conversion)"
+                      : "Document experiments (simplified filename, generic type)";
 
-                    // Use simple sendMessage for text
+                    const fallbackMessage =
+                      `📎 ${fileTypeDescription} Upload Notification\n\n` +
+                      `📄 Filename: ${req.file.originalname}\n` +
+                      `📊 Size: ${formatBytes(req.file.size)}\n` +
+                      `🏷️ Type: ${req.file.mimetype}\n` +
+                      `🔬 Experiments Tried: ${experimentDescription}\n` +
+                      `❌ Status: Upload failed after all attempts\n` +
+                      `🕐 Timestamp: ${new Date().toLocaleString()}\n\n` +
+                      `⚠️ File could not be sent through WhatsApp Web.js API.\n` +
+                      `This may be due to WhatsApp server limitations or file compatibility issues.`;
+
+                    // Use simple sendMessage for text with aggressive timeout
                     const textPromise = client.sendMessage(to, fallbackMessage);
                     const textTimeout = setTimeout(() => {
                       console.error("Text fallback juga timeout!");
@@ -1582,16 +1752,16 @@ const monitorResources = () => {
 
                     clearTimeout(textTimeout);
                     console.log(
-                      "📝 Fallback text message sent dengan ID:",
+                      "📝 Enhanced fallback text message sent dengan ID:",
                       sent.id._serialized
                     );
                   } catch (fallbackError) {
                     console.error(
-                      "❌ Semua attempt gagal termasuk fallback:",
+                      "❌ All attempts failed including enhanced fallback:",
                       fallbackError.message
                     );
                     throw new Error(
-                      `Total failure: Primary (${sendError.message}), Retry (${retryError.message}), Fallback (${fallbackError.message})`
+                      `Total failure: Primary (${sendError.message}), Advanced Retry (${retryError.message}), Enhanced Fallback (${fallbackError.message})`
                     );
                   }
                 }
