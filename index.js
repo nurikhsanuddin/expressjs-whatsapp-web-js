@@ -752,8 +752,10 @@ const monitorResources = () => {
 
           res.json({
             status: "success",
-            message_id: sent.id._serialized,
-            from: from,
+            message: "Message sent successfully",
+            mid: sent.id._serialized.split("_")[2], // Extract only the message ID part
+            from: meta.from.replace(/\D/g, ""),
+            to: meta.to.replace(/\D/g, ""),
           });
         } catch (e) {
           console.error(e);
