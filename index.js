@@ -459,20 +459,20 @@ const monitorResources = () => {
 
     const uptime = Math.round(process.uptime());
     const cpuUsage = process.cpuUsage();
-    
+
     console.log("📊 Resource Usage:", {
       memory_mb: memoryUsageMB,
       uptime_seconds: uptime,
       cpu_user_ms: Math.round(cpuUsage.user / 1000),
       cpu_system_ms: Math.round(cpuUsage.system / 1000),
-      client_status: client && client.info ? 'connected' : 'disconnected',
-      qr_available: currentQRCode ? true : false
+      client_status: client && client.info ? "connected" : "disconnected",
+      qr_available: currentQRCode ? true : false,
     });
 
     // Memory thresholds dan peringatan
     const memoryThreshold = parseInt(process.env.MEMORY_THRESHOLD_MB) || 200;
     const criticalThreshold = memoryThreshold * 1.5;
-    
+
     if (memoryUsageMB.rss > criticalThreshold) {
       console.error(
         `🚨 CRITICAL: Memory usage ${memoryUsageMB.rss}MB > ${criticalThreshold}MB`
@@ -502,7 +502,6 @@ const monitorResources = () => {
       console.log("🧹 Running garbage collection...");
       global.gc();
     }
-
   } catch (err) {
     console.error("❌ Error monitoring resources:", err.message);
   }
@@ -742,14 +741,14 @@ const monitorResources = () => {
             initialized: client ? true : false,
             connected: client && client.info ? true : false,
             qr_available: currentQRCode ? true : false,
-          }
+          },
         };
 
         if (client) {
           try {
             const state = await client.getState();
             health.client.state = state;
-            health.client.connected = state === 'CONNECTED';
+            health.client.connected = state === "CONNECTED";
           } catch (stateError) {
             health.client.state_error = stateError.message;
           }
@@ -758,7 +757,7 @@ const monitorResources = () => {
             health.client.info = {
               phone: client.info.wid.user,
               name: client.info.pushname,
-              platform: client.info.platform
+              platform: client.info.platform,
             };
           }
         }
@@ -768,11 +767,11 @@ const monitorResources = () => {
           try {
             health.browser = {
               connected: !client.pupPage.isClosed(),
-              url: client.pupPage.url()
+              url: client.pupPage.url(),
             };
           } catch (browserError) {
             health.browser = {
-              error: browserError.message
+              error: browserError.message,
             };
           }
         }
@@ -783,7 +782,7 @@ const monitorResources = () => {
         res.status(500).json({
           error: "Health check failed",
           message: error.message,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     });
@@ -798,7 +797,7 @@ const monitorResources = () => {
           browser_connected: false,
           page_info: null,
           memory_usage: process.memoryUsage(),
-          uptime: process.uptime()
+          uptime: process.uptime(),
         };
 
         if (client) {
@@ -813,7 +812,7 @@ const monitorResources = () => {
               debug.browser_connected = !client.pupPage.isClosed();
               debug.page_info = {
                 url: await client.pupPage.url(),
-                title: await client.pupPage.title()
+                title: await client.pupPage.title(),
               };
             } catch (e) {
               debug.page_error = e.message;
@@ -824,7 +823,9 @@ const monitorResources = () => {
             try {
               debug.browser_process = {
                 connected: client.pupBrowser.isConnected(),
-                pid: client.pupBrowser.process() ? client.pupBrowser.process().pid : null
+                pid: client.pupBrowser.process()
+                  ? client.pupBrowser.process().pid
+                  : null,
               };
             } catch (e) {
               debug.browser_process_error = e.message;
@@ -836,7 +837,7 @@ const monitorResources = () => {
       } catch (error) {
         res.status(500).json({
           error: "Debug failed",
-          message: error.message
+          message: error.message,
         });
       }
     });
@@ -845,21 +846,139 @@ const monitorResources = () => {
     app.post("/emergency-restart", async (req, res) => {
       try {
         console.log("🚨 EMERGENCY RESTART TRIGGERED");
-        res.json({ 
-          message: "Restart initiated", 
-          timestamp: new Date().toISOString() 
+        res.json({
+          message: "Restart initiated",
+          timestamp: new Date().toISOString(),
         });
-        
+
         // Give response time to send
         setTimeout(() => {
           console.log("🔄 Forcing process exit for restart...");
           process.exit(1);
         }, 1000);
-        
       } catch (error) {
         res.status(500).json({
           error: "Restart failed",
-          message: error.message
+          message: error.message,
+        });
+      }
+    });
+
+    // Test file upload endpoint dengan debugging yang lebih detail
+    app.post("/test-upload", upload.single("file"), async (req, res) => {
+      try {
+        console.log("🧪 TEST UPLOAD REQUEST");
+
+        if (!req.file) {
+          return res.status(400).json({
+            error: "No file uploaded",
+            test: "failed",
+          });
+        }
+
+        const testResults = {
+          file_info: {
+            name: req.file.originalname,
+            size: req.file.size,
+            mimetype: req.file.mimetype,
+            size_formatted: formatBytes(req.file.size),
+          },
+          client_status: {
+            initialized: !!client,
+            ready: !!(client && client.info),
+            state: null,
+          },
+          browser_status: {
+            connected: false,
+            page_active: false,
+          },
+          test_results: [],
+        };
+
+        if (client) {
+          try {
+            testResults.client_status.state = await client.getState();
+          } catch (e) {
+            testResults.client_status.state_error = e.message;
+          }
+
+          if (client.pupPage) {
+            try {
+              testResults.browser_status.connected = !client.pupPage.isClosed();
+              testResults.browser_status.page_active = true;
+            } catch (e) {
+              testResults.browser_status.error = e.message;
+            }
+          }
+        }
+
+        // Test 1: Create MessageMedia object
+        try {
+          console.log("🧪 Test 1: Creating MessageMedia object...");
+          const media = new MessageMedia(
+            req.file.mimetype,
+            req.file.buffer.toString("base64"),
+            req.file.originalname
+          );
+          testResults.test_results.push({
+            test: "MessageMedia creation",
+            status: "success",
+            data_size: `${Math.round(media.data.length / 1024)} KB`,
+          });
+          console.log("✅ MessageMedia object created successfully");
+        } catch (mediaError) {
+          testResults.test_results.push({
+            test: "MessageMedia creation",
+            status: "failed",
+            error: mediaError.message,
+          });
+          console.error("❌ MessageMedia creation failed:", mediaError.message);
+        }
+
+        // Test 2: Check if we can get to dummy number
+        const testNumber = "628123456789@c.us";
+        try {
+          console.log("🧪 Test 2: Testing chat lookup...");
+          const chat = await client.getChatById(testNumber);
+          testResults.test_results.push({
+            test: "Chat lookup",
+            status: "success",
+            chat_id: chat.id._serialized,
+          });
+        } catch (chatError) {
+          testResults.test_results.push({
+            test: "Chat lookup",
+            status: "expected_failure",
+            note: "Normal untuk test number",
+          });
+        }
+
+        // Test 3: Simple connectivity test
+        try {
+          console.log("🧪 Test 3: Testing WhatsApp connectivity...");
+          await client.getChats();
+          testResults.test_results.push({
+            test: "WhatsApp connectivity",
+            status: "success",
+          });
+        } catch (connectError) {
+          testResults.test_results.push({
+            test: "WhatsApp connectivity",
+            status: "failed",
+            error: connectError.message,
+          });
+        }
+
+        res.json({
+          test: "complete",
+          timestamp: new Date().toISOString(),
+          ...testResults,
+        });
+      } catch (error) {
+        res.status(500).json({
+          test: "failed",
+          error: error.message,
+          timestamp: new Date().toISOString(),
         });
       }
     });
@@ -995,13 +1114,18 @@ const monitorResources = () => {
             try {
               const state = await client.getState();
               console.log("📱 Status WhatsApp:", state);
-              
-              if (state !== 'CONNECTED') {
+
+              if (state !== "CONNECTED") {
                 throw new Error(`WhatsApp tidak terhubung. Status: ${state}`);
               }
             } catch (stateError) {
-              console.error("❌ Error mendapatkan status WhatsApp:", stateError.message);
-              throw new Error(`Gagal verifikasi koneksi WhatsApp: ${stateError.message}`);
+              console.error(
+                "❌ Error mendapatkan status WhatsApp:",
+                stateError.message
+              );
+              throw new Error(
+                `Gagal verifikasi koneksi WhatsApp: ${stateError.message}`
+              );
             }
 
             const media = new MessageMedia(
@@ -1014,7 +1138,7 @@ const monitorResources = () => {
             console.log("📊 Media info:", {
               type: media.mimetype,
               filename: media.filename,
-              size: `${Math.round(media.data.length / 1024)} KB`
+              size: `${Math.round(media.data.length / 1024)} KB`,
             });
 
             // Pre-send checks
@@ -1022,10 +1146,10 @@ const monitorResources = () => {
             try {
               // Check if chat exists
               const chat = await client.getChatById(to);
-              console.log("💬 Chat ditemukan:", { 
-                name: chat.name || 'Unknown',
+              console.log("💬 Chat ditemukan:", {
+                name: chat.name || "Unknown",
                 isGroup: chat.isGroup,
-                id: chat.id._serialized 
+                id: chat.id._serialized,
               });
             } catch (chatError) {
               console.warn("⚠️ Chat check gagal:", chatError.message);
@@ -1037,128 +1161,258 @@ const monitorResources = () => {
               try {
                 const pageUrl = await client.pupPage.url();
                 console.log("🌐 Browser page URL:", pageUrl);
-                
+
                 if (client.pupPage.isClosed()) {
                   throw new Error("Browser page telah ditutup");
                 }
               } catch (pageError) {
                 console.error("❌ Browser page error:", pageError.message);
-                throw new Error(`Browser tidak responsif: ${pageError.message}`);
+                throw new Error(
+                  `Browser tidak responsif: ${pageError.message}`
+                );
               }
             }
-            
-            // Enhanced timeout wrapper dengan multiple fallbacks
-            const sendWithTimeout = (client, to, media, timeoutMs = 60000) => {
+
+            // Enhanced timeout wrapper dengan force kill mechanism
+            const sendWithTimeout = (client, to, media, timeoutMs = 45000) => {
               return new Promise((resolve, reject) => {
                 let isResolved = false;
-                
+                let sendPromise = null;
+
+                // Force timeout yang lebih agresif
                 const timeout = setTimeout(() => {
                   if (!isResolved) {
                     isResolved = true;
-                    console.error("⏰ TIMEOUT: sendMessage tidak meresponse dalam waktu yang ditentukan");
-                    reject(new Error(`Timeout: Pengiriman file gagal dalam ${timeoutMs/1000} detik`));
+                    console.error(
+                      "⏰ FORCE TIMEOUT: Killing sendMessage operation"
+                    );
+
+                    // Attempt to cancel the promise (won't work but good practice)
+                    if (
+                      sendPromise &&
+                      typeof sendPromise.cancel === "function"
+                    ) {
+                      sendPromise.cancel();
+                    }
+
+                    reject(
+                      new Error(
+                        `Force timeout: sendMessage dibatalkan setelah ${
+                          timeoutMs / 1000
+                        } detik`
+                      )
+                    );
                   }
                 }, timeoutMs);
 
-                // Heartbeat check untuk memastikan koneksi masih hidup
+                // Heartbeat dengan early termination
                 const heartbeatInterval = setInterval(async () => {
                   if (isResolved) {
                     clearInterval(heartbeatInterval);
                     return;
                   }
-                  
+
                   try {
                     console.log("💓 Heartbeat check...");
                     const state = await client.getState();
-                    if (state !== 'CONNECTED') {
+                    if (state !== "CONNECTED") {
                       clearInterval(heartbeatInterval);
                       if (!isResolved) {
                         isResolved = true;
                         clearTimeout(timeout);
-                        reject(new Error(`Koneksi terputus saat mengirim: ${state}`));
+                        reject(
+                          new Error(`Koneksi terputus saat mengirim: ${state}`)
+                        );
                       }
                     }
                   } catch (heartbeatError) {
-                    console.warn("⚠️ Heartbeat check error:", heartbeatError.message);
+                    console.warn(
+                      "⚠️ Heartbeat error, assuming disconnected:",
+                      heartbeatError.message
+                    );
+                    clearInterval(heartbeatInterval);
+                    if (!isResolved) {
+                      isResolved = true;
+                      clearTimeout(timeout);
+                      reject(
+                        new Error(
+                          "Heartbeat check gagal - koneksi mungkin terputus"
+                        )
+                      );
+                    }
                   }
-                }, 10000); // Check setiap 10 detik
+                }, 5000); // Check setiap 5 detik lebih agresif
 
-                console.log(`⏱️ Mengirim file dengan timeout ${timeoutMs/1000} detik...`);
+                console.log(
+                  `⏱️ Mengirim file dengan force timeout ${
+                    timeoutMs / 1000
+                  } detik...`
+                );
                 console.log("📤 Memulai client.sendMessage...");
-                
-                // Attempt to send message
-                const sendPromise = client.sendMessage(to, media);
-                
-                // Handle the promise
-                sendPromise
-                  .then((result) => {
-                    clearInterval(heartbeatInterval);
-                    if (!isResolved) {
-                      isResolved = true;
-                      clearTimeout(timeout);
-                      console.log("✅ client.sendMessage berhasil");
-                      resolve(result);
-                    }
-                  })
-                  .catch((error) => {
-                    clearInterval(heartbeatInterval);
-                    if (!isResolved) {
-                      isResolved = true;
-                      clearTimeout(timeout);
-                      console.error("❌ client.sendMessage gagal:", error.message);
-                      reject(error);
-                    }
-                  });
 
-                // Handle case where promise never resolves/rejects
+                // Create the send promise dengan immediate timeout handling
+                try {
+                  sendPromise = client.sendMessage(to, media);
+
+                  // Set a backup timeout just for this promise
+                  const promiseTimeout = setTimeout(() => {
+                    if (!isResolved) {
+                      console.warn(
+                        "🔥 Promise timeout - operation still hanging"
+                      );
+                    }
+                  }, timeoutMs - 5000);
+
+                  // Handle the promise dengan aggressive timeout
+                  sendPromise
+                    .then((result) => {
+                      clearTimeout(promiseTimeout);
+                      clearInterval(heartbeatInterval);
+                      if (!isResolved) {
+                        isResolved = true;
+                        clearTimeout(timeout);
+                        console.log("✅ client.sendMessage berhasil");
+                        resolve(result);
+                      }
+                    })
+                    .catch((error) => {
+                      clearTimeout(promiseTimeout);
+                      clearInterval(heartbeatInterval);
+                      if (!isResolved) {
+                        isResolved = true;
+                        clearTimeout(timeout);
+                        console.error(
+                          "❌ client.sendMessage gagal:",
+                          error.message
+                        );
+                        reject(error);
+                      }
+                    });
+                } catch (immediateError) {
+                  clearInterval(heartbeatInterval);
+                  if (!isResolved) {
+                    isResolved = true;
+                    clearTimeout(timeout);
+                    console.error(
+                      "❌ Immediate error saat memanggil sendMessage:",
+                      immediateError.message
+                    );
+                    reject(immediateError);
+                  }
+                }
+
+                // Early warning system
                 setTimeout(() => {
                   if (!isResolved) {
-                    console.warn("⚠️ sendMessage masih belum meresponse setelah 30 detik");
+                    console.warn(
+                      "⚠️ sendMessage masih belum meresponse setelah 15 detik"
+                    );
+                  }
+                }, 15000);
+
+                setTimeout(() => {
+                  if (!isResolved) {
+                    console.warn(
+                      "🔥 sendMessage masih hanging setelah 30 detik - kemungkinan akan di-timeout"
+                    );
                   }
                 }, 30000);
               });
             };
 
             try {
-              sent = await sendWithTimeout(client, to, media, 60000); // 1 menit timeout lebih agresif
+              // First attempt: Reduce timeout dan optimize media
+              console.log(
+                "🎯 Attempt 1: Optimized send dengan timeout 45 detik"
+              );
+
+              // Create optimized media object
+              const optimizedMedia = new MessageMedia(
+                media.mimetype,
+                media.data.substring(0, Math.min(media.data.length, 1000000)), // Limit base64 size
+                media.filename || "file"
+              );
+
+              sent = await sendWithTimeout(client, to, optimizedMedia, 45000); // 45 detik
               console.log(
                 `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
               );
             } catch (sendError) {
-              console.error("❌ Error saat mengirim file:", sendError.message);
-              
-              // Retry mechanism untuk kasus tertentu
-              if (sendError.message.includes("Timeout") || sendError.message.includes("tidak meresponse")) {
-                console.log("🔄 Mencoba mengirim ulang dengan timeout lebih pendek...");
-                
+              console.error("❌ Primary attempt gagal:", sendError.message);
+
+              // Retry dengan approach yang berbeda
+              if (
+                sendError.message.includes("timeout") ||
+                sendError.message.includes("Timeout") ||
+                sendError.message.includes("hanging")
+              ) {
+                console.log(
+                  "🔄 Attempt 2: Mencoba dengan timeout lebih pendek..."
+                );
+
                 try {
-                  // Coba dengan media yang lebih kecil (kompresi data)
-                  const compressedMedia = new MessageMedia(
-                    media.mimetype,
-                    media.data,
-                    media.filename || 'file'
+                  // Approach 2: Much smaller timeout, simpler media
+                  const simpleMedia = new MessageMedia(
+                    req.file.mimetype,
+                    req.file.buffer.toString("base64"),
+                    req.file.originalname.substring(0, 50) // Shorter filename
                   );
-                  
-                  // Reduce timeout dan coba lagi
-                  sent = await sendWithTimeout(client, to, compressedMedia, 30000); // 30 detik
-                  console.log("✅ Retry berhasil dengan ID:", sent.id._serialized);
-                  
+
+                  sent = await sendWithTimeout(client, to, simpleMedia, 20000); // 20 detik saja
+                  console.log(
+                    "✅ Retry berhasil dengan ID:",
+                    sent.id._serialized
+                  );
                 } catch (retryError) {
                   console.error("❌ Retry juga gagal:", retryError.message);
-                  
-                  // Last resort: coba kirim sebagai text dengan info file
+
+                  // Approach 3: Text-based fallback dengan file info
+                  console.log("🆘 Attempt 3: Fallback ke text message...");
                   try {
-                    console.log("🆘 Last resort: mengirim info file sebagai teks...");
-                    const fallbackMessage = `⚠️ Gagal mengirim file: ${req.file.originalname} (${formatBytes(req.file.size)})\nTipe: ${req.file.mimetype}\nError: ${retryError.message}`;
-                    sent = await client.sendMessage(to, fallbackMessage);
-                    console.log("📝 Fallback message sent dengan ID:", sent.id._serialized);
+                    const fallbackMessage =
+                      `📎 File Upload Notification\n\n` +
+                      `Filename: ${req.file.originalname}\n` +
+                      `Size: ${formatBytes(req.file.size)}\n` +
+                      `Type: ${req.file.mimetype}\n` +
+                      `Status: Upload failed - ${retryError.message.substring(
+                        0,
+                        100
+                      )}\n\n` +
+                      `⚠️ File tidak dapat dikirim melalui WhatsApp API saat ini.`;
+
+                    // Use simple sendMessage for text
+                    const textPromise = client.sendMessage(to, fallbackMessage);
+                    const textTimeout = setTimeout(() => {
+                      console.error("Text fallback juga timeout!");
+                    }, 10000);
+
+                    sent = await Promise.race([
+                      textPromise,
+                      new Promise((_, reject) =>
+                        setTimeout(
+                          () => reject(new Error("Text fallback timeout")),
+                          10000
+                        )
+                      ),
+                    ]);
+
+                    clearTimeout(textTimeout);
+                    console.log(
+                      "📝 Fallback text message sent dengan ID:",
+                      sent.id._serialized
+                    );
                   } catch (fallbackError) {
-                    console.error("❌ Fallback message juga gagal:", fallbackError.message);
-                    throw new Error(`Semua upaya gagal: ${sendError.message}`);
+                    console.error(
+                      "❌ Semua attempt gagal termasuk fallback:",
+                      fallbackError.message
+                    );
+                    throw new Error(
+                      `Total failure: Primary (${sendError.message}), Retry (${retryError.message}), Fallback (${fallbackError.message})`
+                    );
                   }
                 }
               } else {
-                throw new Error(`Gagal mengirim file: ${sendError.message}`);
+                throw new Error(`Non-timeout error: ${sendError.message}`);
               }
             }
           } else {
@@ -1185,11 +1439,11 @@ const monitorResources = () => {
           res.json(response);
         } catch (e) {
           console.error("❌ Error in send-message:", e);
-          
+
           // Specific error messages untuk berbagai kasus
           let errorMessage = "Gagal mengirim pesan";
           let statusCode = 500;
-          
+
           if (e.message.includes("Timeout")) {
             errorMessage = "Pengiriman pesan timeout - coba lagi";
             statusCode = 408;
@@ -1200,7 +1454,8 @@ const monitorResources = () => {
             errorMessage = "Chat tidak ditemukan - nomor mungkin tidak valid";
             statusCode = 400;
           } else if (e.message.includes("Session not ready")) {
-            errorMessage = "Sesi WhatsApp belum siap - scan QR code terlebih dahulu";
+            errorMessage =
+              "Sesi WhatsApp belum siap - scan QR code terlebih dahulu";
             statusCode = 503;
           } else if (e.message.includes("File too large")) {
             errorMessage = `File terlalu besar - maksimal ${MAX_FILE_SIZE_MB}MB`;
@@ -1208,13 +1463,16 @@ const monitorResources = () => {
           } else if (e.message.includes("Unsupported file type")) {
             errorMessage = "Tipe file tidak didukung";
             statusCode = 415;
-          } else if (e.message.includes("Browser crashed") || e.message.includes("Target closed")) {
+          } else if (
+            e.message.includes("Browser crashed") ||
+            e.message.includes("Target closed")
+          ) {
             errorMessage = "Browser WhatsApp crash - restart diperlukan";
             statusCode = 503;
           } else {
             errorMessage = `Error: ${e.message}`;
           }
-          
+
           res.status(statusCode).json({
             status: "error",
             message: errorMessage,
