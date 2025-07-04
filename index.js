@@ -2,69 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const qrcode = require("qrcode-terminal"); // Gunakan fu  // Disable images and sounds if configured
-if (process.env.DISABLE_IMAGES === "true") {
-  defaultArgs.push("--blink-settings=imagesEnabled=false");
-  console.log("Images disabled for better performance");
-}
-
-if (process.env.DISABLE_SOUNDS === "true") {
-  defaultArgs.push("--mute-audio");
-  console.log("Audio disabled for better performance");
-}
-
-// Set lower process priority to reduce CPU impact
-defaultArgs.push("--disable-hang-monitor");
-defaultArgs.push("--disable-crash-reporter");
-
-// Reduce memory usage by limiting tab processes
-defaultArgs.push("--renderer-process-limit=1");
-defaultArgs.push("--disable-translate");
-defaultArgs.push("--disable-sync");
-
-// Check if we're in a production environment (like Linux server)
-const isProduction = process.env.NODE_ENV === "production";
-const puppeteerConfig = await getPuppeteerConfig();
-
-// Inisialisasi WhatsApp client dengan konfigurasi yang didapat
-client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: {
-    ...puppeteerConfig,
-    // Menangkap browser instance untuk dikelola nanti
-    browserWSEndpoint: null, // Paksa pembuatan instance baru
-    browser: async (browser) => {
-      browserInstance = browser;
-      const pid = getBrowserPid(browser);
-      console.log(
-        `🌐 Browser instance created for WhatsApp Web JS with PID: ${pid}`
-      );
-      return browser;
-    },
-  },
-});
-
-client.on("qr", (qr) => qrcode.generate(qr, { small: true }));
-client.on("ready", () => console.log("✅ WhatsApp ready!"));
-client.on("auth_failure", (msg) =>
-  console.error(`⚠️ WhatsApp authentication failed: ${msg}`)
-);
-client.on("disconnected", (reason) => {
-  console.log(`🔌 WhatsApp disconnected: ${reason}`);
-  // Jika terjadi disconnect, tetap pastikan browser ditutup
-  if (browserInstance) {
-    try {
-      browserInstance
-        .close()
-        .catch((err) =>
-          console.error("Error closing browser after disconnect:", err.message)
-        );
-    } catch (err) {
-      console.error("Error closing browser after disconnect:", err.message);
-    }
-  }
-});
-er = require("puppeteer");
+const qrcode = require("qrcode-terminal");
+const puppeteer = require("puppeteer");
 const path = require("path");
 const fs = require("fs");
 const { exec } = require("child_process");
@@ -150,23 +89,6 @@ const gracefulShutdown = async () => {
 // Handle process termination signals
 process.on("SIGTERM", gracefulShutdown);
 process.on("SIGINT", gracefulShutdown);
-
-// Tambahkan event listener untuk menutup server dengan benar
-process.on("SIGTERM", () => {
-  console.log("Received SIGTERM, shutting down server gracefully");
-  server.close(() => {
-    console.log("Server closed");
-    gracefulShutdown();
-  });
-});
-
-process.on("SIGINT", () => {
-  console.log("Received SIGINT, shutting down server gracefully");
-  server.close(() => {
-    console.log("Server closed");
-    gracefulShutdown();
-  });
-});
 
 // Fungsi utilitas untuk mencari browser di sistem
 const findChromeBrowser = () => {
@@ -254,6 +176,26 @@ const getPuppeteerConfig = async () => {
     defaultArgs.push("--disable-gpu");
     console.log("GPU disabled for better compatibility");
   }
+  
+  // Disable images and sounds if configured
+  if (process.env.DISABLE_IMAGES === "true") {
+    defaultArgs.push("--blink-settings=imagesEnabled=false");
+    console.log("Images disabled for better performance");
+  }
+
+  if (process.env.DISABLE_SOUNDS === "true") {
+    defaultArgs.push("--mute-audio");
+    console.log("Audio disabled for better performance");
+  }
+
+  // Set lower process priority to reduce CPU impact
+  defaultArgs.push("--disable-hang-monitor");
+  defaultArgs.push("--disable-crash-reporter");
+
+  // Reduce memory usage by limiting tab processes
+  defaultArgs.push("--renderer-process-limit=1");
+  defaultArgs.push("--disable-translate");
+  defaultArgs.push("--disable-sync");
 
   // Check if we're in a production environment (like Linux server)
   const isProduction = process.env.NODE_ENV === "production";
@@ -687,6 +629,19 @@ const monitorResources = () => {
         } minutes)`
       );
     });
+    
+    // Tambahkan event listener untuk menutup server dengan benar
+    const handleServerShutdown = (signal) => {
+      console.log(`Received ${signal}, shutting down server gracefully`);
+      server.close(() => {
+        console.log("Server closed");
+        gracefulShutdown();
+      });
+    };
+    
+    // Use the server-specific shutdown handlers
+    process.on("SIGTERM", () => handleServerShutdown("SIGTERM"));
+    process.on("SIGINT", () => handleServerShutdown("SIGINT"));
   } catch (error) {
     console.error("Fatal error initializing application:", error);
     process.exit(1);
