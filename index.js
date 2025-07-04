@@ -1354,13 +1354,14 @@ const monitorResources = () => {
             const isPDF = req.file.mimetype === "application/pdf";
 
             console.log("🔄 Memulai proses pengiriman file ke WhatsApp...");
-            console.log("📊 Media info:", {
+            console.log("📊 File info:", {
+              name: req.file.originalname,
               type: req.file.mimetype,
-              filename: req.file.originalname,
               size: `${Math.round(req.file.size / 1024)} KB`,
               isImage: isImage,
               isPDF: isPDF,
               bufferLength: req.file.buffer.length,
+              strategy: "UNIVERSAL_DOCUMENT_MODE",
             });
 
             // Enhanced diagnostics for images
@@ -1990,282 +1991,125 @@ const monitorResources = () => {
             }
 
             try {
-              let mediaToSend;
-              let timeout;
-              let attemptName;
+              // 📄 UNIVERSAL DOCUMENT APPROACH
+              // Mengirim semua file sebagai dokumen untuk stabilitas maksimal
+              console.log(
+                "� UNIVERSAL APPROACH: Sending all files as documents"
+              );
+              console.log(
+                "🎯 This approach is most stable and reliable for all file types"
+              );
 
-              if (isImage) {
-                // Images - use EXACT official documentation approach
-                attemptName = "Image send (official documentation)";
-                timeout = 15000;
+              const attemptName = "Universal Document Send";
+              const timeout = 30000; // 30 detik timeout
 
-                console.log(
-                  "🖼️ Image detected - using EXACT official documentation approach"
-                );
-                console.log(
-                  "📚 Following: https://wwebjs.dev/guide/creating-your-bot/handling-attachments.html"
-                );
-
-                // EXACT official syntax: new MessageMedia(mimetype, base64data)
-                mediaToSend = new MessageMedia(
-                  req.file.mimetype,
-                  req.file.buffer.toString("base64")
-                  // NO third parameter (filename) as per official docs
-                );
-
-                console.log(
-                  "✨ Using official syntax: new MessageMedia(mimetype, base64)"
-                );
-                console.log("🎯 No filename parameter - exactly as documented");
-              } else if (isPDF) {
-                // PDFs work well with standard approach
-                attemptName = "PDF optimized send";
-                timeout = 45000;
-
-                console.log("📄 PDF detected - using standard PDF handling");
-                mediaToSend = new MessageMedia(
-                  req.file.mimetype,
-                  req.file.buffer.toString("base64"),
-                  req.file.originalname
-                );
-              } else {
-                // Other file types
-                attemptName = "File optimized send";
-                timeout = 40000;
-
-                console.log("📁 Other file type detected");
-                mediaToSend = new MessageMedia(
-                  req.file.mimetype,
-                  req.file.buffer.toString("base64"),
-                  req.file.originalname
-                );
-              }
+              // Prepare media as document with filename
+              const mediaToSend = new MessageMedia(
+                req.file.mimetype,
+                req.file.buffer.toString("base64"),
+                req.file.originalname
+              );
 
               console.log(
-                `🎯 Attempt 1: ${attemptName} dengan timeout ${
+                `🎯 Attempt: ${attemptName} dengan timeout ${
                   timeout / 1000
                 } detik`
               );
+              console.log("� File info:", {
+                name: req.file.originalname,
+                type: req.file.mimetype,
+                size: `${Math.round(req.file.size / 1024)} KB`,
+                sending_as: "Document",
+              });
 
-              // Try sending with optional caption (as per official docs)
-              const sendOptions = {};
-              if (req.file.originalname) {
-                sendOptions.caption = `📎 ${req.file.originalname}`;
-                console.log(
-                  "📝 Adding caption with filename:",
-                  sendOptions.caption
-                );
-              }
+              // Send as document with sendDocument option
+              const sendOptions = {
+                sendMediaAsDocument: true, // Force document mode
+                caption: `📎 ${req.file.originalname}\n📊 Size: ${formatBytes(
+                  req.file.size
+                )}\n🏷️ Type: ${req.file.mimetype}`,
+              };
 
-              // Official method: client.sendMessage(chatId, media, options)
-              if (Object.keys(sendOptions).length > 0) {
-                console.log("📤 Sending with caption using official syntax");
-                sent = await sendWithTimeout(
-                  client,
-                  to,
-                  mediaToSend,
-                  timeout,
-                  sendOptions
-                );
-              } else {
-                console.log("📤 Sending without caption using official syntax");
-                sent = await sendWithTimeout(client, to, mediaToSend, timeout);
-              }
+              console.log("📤 Sending as document with enhanced options");
+              console.log("� Send options:", sendOptions);
+
+              sent = await sendWithTimeout(
+                client,
+                to,
+                mediaToSend,
+                timeout,
+                sendOptions
+              );
+
               console.log(
-                `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
+                `✅ File berhasil dikirim sebagai dokumen dengan ID: ${sent.id._serialized}`
               );
             } catch (sendError) {
-              console.error("❌ Primary attempt gagal:", sendError.message);
+              console.error(
+                "❌ Document send attempt failed:",
+                sendError.message
+              );
 
-              // Retry dengan approach yang berbeda
+              // Retry dengan approach minimal jika dokumen gagal
               if (
                 sendError.message.includes("timeout") ||
                 sendError.message.includes("Timeout") ||
                 sendError.message.includes("hanging")
               ) {
-                console.log("🔄 Attempt 2: Mencoba approach alternatif...");
+                console.log(
+                  "🔄 Attempt 2: Trying simplified document approach..."
+                );
 
                 try {
-                  let retryMedia;
-                  let retryTimeout;
+                  // Simplified document approach - minimal options
+                  console.log("� Fallback: Simplified document send");
 
-                  if (isImage) {
-                    // If the optimized document approach fails, try alternative image methods
-                    console.log(
-                      "🖼️ Official image approach failed, trying fallback approaches"
-                    );
-                    retryTimeout = 12000;
+                  const retryMedia = new MessageMedia(
+                    req.file.mimetype,
+                    req.file.buffer.toString("base64"),
+                    req.file.originalname
+                  );
 
-                    // Approach 1: Try with original image MIME type (legacy approach)
-                    console.log(
-                      "🔬 Fallback Experiment 1: Original image MIME type"
-                    );
-                    try {
-                      retryMedia = new MessageMedia(
-                        req.file.mimetype, // Use original MIME type
-                        req.file.buffer.toString("base64"),
-                        req.file.originalname
-                      );
+                  // Minimal options for maximum compatibility
+                  const simpleOptions = {
+                    sendMediaAsDocument: true,
+                  };
 
-                      sent = await sendWithTimeout(
-                        client,
-                        to,
-                        retryMedia,
-                        8000
-                      );
-                      console.log(
-                        "✅ Fallback Experiment 1 success:",
-                        sent.id._serialized
-                      );
-                    } catch (exp1Error) {
-                      console.log(
-                        "❌ Fallback Experiment 1 failed, trying experiment 2"
-                      );
+                  sent = await sendWithTimeout(
+                    client,
+                    to,
+                    retryMedia,
+                    20000, // Shorter timeout for retry
+                    simpleOptions
+                  );
 
-                      // Approach 2: Create tiny test image
-                      console.log("🔬 Fallback Experiment 2: Send tiny image");
-                      try {
-                        // Create a minimal 1x1 pixel PNG for testing
-                        const tinyPNG =
-                          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-                        retryMedia = new MessageMedia(
-                          "image/png",
-                          tinyPNG,
-                          "connectivity_test.png"
-                        );
-
-                        sent = await sendWithTimeout(
-                          client,
-                          to,
-                          retryMedia,
-                          6000
-                        );
-                        console.log(
-                          "✅ Fallback Experiment 2 success (tiny image):",
-                          sent.id._serialized
-                        );
-                        console.log(
-                          "� Note: Sent tiny test image instead of original file"
-                        );
-                      } catch (exp2Error) {
-                        console.log(
-                          "❌ Fallback Experiment 2 failed, trying experiment 3"
-                        );
-
-                        // Approach 3: Force JPEG conversion
-                        console.log(
-                          "🔬 Fallback Experiment 3: Force JPEG conversion"
-                        );
-                        retryMedia = new MessageMedia(
-                          "image/jpeg",
-                          req.file.buffer.toString("base64"),
-                          "converted_image.jpg"
-                        );
-
-                        sent = await sendWithTimeout(
-                          client,
-                          to,
-                          retryMedia,
-                          4000
-                        );
-                        console.log(
-                          "✅ Fallback Experiment 3 success:",
-                          sent.id._serialized
-                        );
-                      }
-                    }
-                  } else {
-                    // Enhanced retry for non-images (PDFs, documents, etc.)
-                    console.log(
-                      "📄 Non-image retry: Advanced document handling"
-                    );
-                    retryTimeout = 25000;
-
-                    try {
-                      // Approach 1: Try with reduced filename
-                      console.log(
-                        "🔬 Document Experiment 1: Simplified filename"
-                      );
-                      retryMedia = new MessageMedia(
-                        req.file.mimetype,
-                        req.file.buffer.toString("base64"),
-                        req.file.originalname.substring(0, 30) +
-                          path.extname(req.file.originalname)
-                      );
-
-                      sent = await sendWithTimeout(
-                        client,
-                        to,
-                        retryMedia,
-                        20000
-                      );
-                      console.log(
-                        "✅ Document Experiment 1 success:",
-                        sent.id._serialized
-                      );
-                    } catch (docExp1Error) {
-                      console.log(
-                        "❌ Document Experiment 1 failed, trying experiment 2"
-                      );
-
-                      // Approach 2: Try as generic document type
-                      console.log(
-                        "🔬 Document Experiment 2: Generic document type"
-                      );
-                      retryMedia = new MessageMedia(
-                        "application/octet-stream",
-                        req.file.buffer.toString("base64"),
-                        req.file.originalname
-                      );
-
-                      sent = await sendWithTimeout(
-                        client,
-                        to,
-                        retryMedia,
-                        15000
-                      );
-                      console.log(
-                        "✅ Document Experiment 2 success:",
-                        sent.id._serialized
-                      );
-                    }
-                  }
-                } catch (retryError) {
-                  console.error("❌ Retry juga gagal:", retryError.message);
-
-                  // Enhanced text-based fallback with experimental approach info
                   console.log(
-                    "🆘 Final Attempt: Enhanced fallback to text message..."
+                    "✅ Simplified document send success:",
+                    sent.id._serialized
+                  );
+                } catch (retryError) {
+                  console.error(
+                    "❌ Simplified retry also failed:",
+                    retryError.message
+                  );
+
+                  // Final fallback to text notification
+                  console.log(
+                    "🆘 Final Attempt: Fallback to text notification..."
                   );
                   try {
-                    const fileTypeDescription = isImage
-                      ? "Image"
-                      : isPDF
-                      ? "PDF Document"
-                      : "File";
-                    const experimentDescription = isImage
-                      ? "Official approach + fallback experiments (document-mode, no-filename, tiny image, JPEG conversion)"
-                      : "Document experiments (simplified filename, generic type)";
-
                     const fallbackMessage =
-                      `📎 ${fileTypeDescription} Upload Notification\n\n` +
+                      `📎 Document Upload Notification\n\n` +
                       `📄 Filename: ${req.file.originalname}\n` +
                       `📊 Size: ${formatBytes(req.file.size)}\n` +
                       `🏷️ Type: ${req.file.mimetype}\n` +
-                      `🔬 Approaches Tried: ${experimentDescription}\n` +
-                      `❌ Status: Upload failed after all optimized attempts\n` +
+                      `❌ Status: Document upload failed after all attempts\n` +
                       `🕐 Timestamp: ${new Date().toLocaleString()}\n\n` +
                       `⚠️ File could not be sent through WhatsApp Web.js API.\n` +
-                      `This may indicate a temporary WhatsApp server issue or file compatibility problem.`;
-
-                    // Use simple sendMessage for text with aggressive timeout
-                    const textPromise = client.sendMessage(to, fallbackMessage);
-                    const textTimeout = setTimeout(() => {
-                      console.error("Text fallback juga timeout!");
-                    }, 10000);
+                      `This may indicate a temporary WhatsApp server issue.`;
 
                     sent = await Promise.race([
-                      textPromise,
+                      client.sendMessage(to, fallbackMessage),
                       new Promise((_, reject) =>
                         setTimeout(
                           () => reject(new Error("Text fallback timeout")),
@@ -2274,18 +2118,17 @@ const monitorResources = () => {
                       ),
                     ]);
 
-                    clearTimeout(textTimeout);
                     console.log(
-                      "📝 Enhanced fallback text message sent dengan ID:",
+                      "📝 Fallback text notification sent:",
                       sent.id._serialized
                     );
                   } catch (fallbackError) {
                     console.error(
-                      "❌ All attempts failed including enhanced fallback:",
+                      "❌ All attempts failed including text fallback:",
                       fallbackError.message
                     );
                     throw new Error(
-                      `Total failure: Primary (${sendError.message}), Advanced Retry (${retryError.message}), Enhanced Fallback (${fallbackError.message})`
+                      `Total failure: Document Send (${sendError.message}), Simplified Retry (${retryError.message}), Text Fallback (${fallbackError.message})`
                     );
                   }
                 }
