@@ -1409,19 +1409,41 @@ const monitorResources = () => {
                   "🔄 CRITICAL FIX: Ensuring target chat is loaded..."
                 );
                 try {
-                  // Check if any chat is currently loaded
+                  // Check if any chat is currently loaded with enhanced detection
                   const chatLoaded = await client.pupPage.evaluate(() => {
-                    return !!document.querySelector(
+                    const conversationPanel = document.querySelector(
                       '[data-testid="conversation-panel"]'
                     );
+                    const clipButton = document.querySelector(
+                      '[data-testid="clip"]'
+                    );
+                    const messageComposer = document.querySelector(
+                      '[data-testid="conversation-compose-box-input"]'
+                    );
+
+                    return {
+                      hasConversation: !!conversationPanel,
+                      hasClipButton: !!clipButton,
+                      hasComposer: !!messageComposer,
+                      fullyReady: !!(
+                        conversationPanel &&
+                        clipButton &&
+                        messageComposer
+                      ),
+                    };
                   });
 
-                  console.log("💬 Chat currently loaded:", chatLoaded);
+                  console.log("💬 Chat load status:", chatLoaded);
 
-                  if (!chatLoaded) {
-                    console.log(
-                      "🔄 No chat loaded - attempting to open target chat..."
-                    );
+                  if (!chatLoaded.fullyReady) {
+                    if (chatLoaded.hasConversation) {
+                      console.log(
+                        "⚠️ Chat partially loaded - missing interface elements"
+                      );
+                    } else {
+                      console.log("❌ No chat currently loaded");
+                    }
+                    console.log("🔄 Attempting to open target chat...");
 
                     // Try to get and open the target chat
                     const targetChat = await client.getChatById(to);
@@ -1430,23 +1452,153 @@ const monitorResources = () => {
                       id: targetChat.id._serialized,
                     });
 
-                    // Use WhatsApp Web.js internal method to open chat
-                    await client.pupPage.evaluate((chatId) => {
-                      if (window.Store && window.Store.Chat) {
-                        const chat = window.Store.Chat.get(chatId);
-                        if (chat) {
-                          window.Store.Cmd.openChatAt(chat);
-                          return true;
+                    // Use modern WhatsApp Web.js approach to open chat
+                    const openChatResult = await client.pupPage.evaluate(
+                      (chatId) => {
+                        try {
+                          // Method 1: Try using WWebJS's built-in approach
+                          if (window.WWebJS && window.WWebJS.openChat) {
+                            window.WWebJS.openChat(chatId);
+                            return { success: true, method: "WWebJS.openChat" };
+                          }
+
+                          // Method 2: Try modern Store API structure
+                          if (window.Store && window.Store.Chats) {
+                            const chat = window.Store.Chats.get(chatId);
+                            if (
+                              chat &&
+                              window.Store.Cmd &&
+                              window.Store.Cmd.openChatAt
+                            ) {
+                              window.Store.Cmd.openChatAt(chat);
+                              return {
+                                success: true,
+                                method: "Store.Cmd.openChatAt",
+                              };
+                            }
+                          }
+
+                          // Method 3: Try alternative Store structure
+                          if (window.Store && window.Store.Chat) {
+                            const chat = window.Store.Chat.get(chatId);
+                            if (chat) {
+                              // Try different command variations
+                              if (
+                                window.Store.Cmd &&
+                                window.Store.Cmd.selectChat
+                              ) {
+                                window.Store.Cmd.selectChat(chat);
+                                return {
+                                  success: true,
+                                  method: "Store.Cmd.selectChat",
+                                };
+                              }
+                              if (
+                                window.Store.Cmd &&
+                                window.Store.Cmd.openChat
+                              ) {
+                                window.Store.Cmd.openChat(chat);
+                                return {
+                                  success: true,
+                                  method: "Store.Cmd.openChat",
+                                };
+                              }
+                              if (
+                                window.Store.Cmd &&
+                                window.Store.Cmd.openChatAt
+                              ) {
+                                window.Store.Cmd.openChatAt(chat);
+                                return {
+                                  success: true,
+                                  method: "Store.Cmd.openChatAt_legacy",
+                                };
+                              }
+                            }
+                          }
+
+                          // Method 4: Try direct URL navigation (fallback)
+                          const chatUrl = `https://web.whatsapp.com/send?phone=${chatId.replace(
+                            "@c.us",
+                            ""
+                          )}`;
+                          window.location.href = chatUrl;
+                          return { success: true, method: "URL_navigation" };
+                        } catch (error) {
+                          return {
+                            success: false,
+                            error: error.message,
+                            availableStore: {
+                              hasStore: !!window.Store,
+                              hasChats: !!(window.Store && window.Store.Chats),
+                              hasChat: !!(window.Store && window.Store.Chat),
+                              hasCmd: !!(window.Store && window.Store.Cmd),
+                              hasWWebJS: !!window.WWebJS,
+                            },
+                          };
                         }
+                      },
+                      to
+                    );
+
+                    console.log(
+                      "🔄 Chat opening attempt result:",
+                      openChatResult
+                    );
+
+                    if (openChatResult.success) {
+                      console.log(
+                        `✅ Chat opened successfully using: ${openChatResult.method}`
+                      );
+                    } else {
+                      console.warn(
+                        "⚠️ Chat opening failed:",
+                        openChatResult.error
+                      );
+                      console.log(
+                        "🔍 WhatsApp Web Store availability:",
+                        openChatResult.availableStore
+                      );
+
+                      // Retry with a different approach if first attempt failed
+                      console.log(
+                        "� Attempting alternative chat loading method..."
+                      );
+                      try {
+                        // Alternative: Use WhatsApp Web.js sendMessage without media to "warm up" the chat
+                        await client.sendMessage(
+                          to,
+                          "📱 Initializing chat for media upload..."
+                        );
+                        console.log(
+                          "✅ Chat warmed up successfully with text message"
+                        );
+
+                        // Give WhatsApp Web a moment to load the chat interface
+                        await new Promise((resolve) =>
+                          setTimeout(resolve, 1500)
+                        );
+                      } catch (warmupError) {
+                        console.warn(
+                          "⚠️ Chat warmup also failed:",
+                          warmupError.message
+                        );
+                        console.log(
+                          "📝 Proceeding anyway - WhatsApp Web.js may handle chat opening automatically"
+                        );
                       }
-                      return false;
-                    }, to);
+                    }
 
-                    // Wait for chat to load
+                    // Wait for chat to load with adaptive timeout
                     console.log("⏳ Waiting for chat interface to load...");
-                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    let chatLoadWaitTime = 1000;
+                    if (openChatResult.method === "URL_navigation") {
+                      chatLoadWaitTime = 3000; // URL navigation needs more time
+                    }
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, chatLoadWaitTime)
+                    );
 
-                    // Verify chat is now loaded
+                    // Verify chat is now loaded with enhanced checks
                     const chatNowLoaded = await client.pupPage.evaluate(() => {
                       const conversationPanel = document.querySelector(
                         '[data-testid="conversation-panel"]'
@@ -1454,26 +1606,59 @@ const monitorResources = () => {
                       const clipButton = document.querySelector(
                         '[data-testid="clip"]'
                       );
+                      const messageComposer = document.querySelector(
+                        '[data-testid="conversation-compose-box-input"]'
+                      );
+                      const mediaInput = document.querySelector(
+                        'input[accept*="image"]'
+                      );
+
                       return {
                         conversation_loaded: !!conversationPanel,
                         clip_button_available: !!clipButton,
+                        message_composer_available: !!messageComposer,
+                        media_input_available: !!mediaInput,
+                        overall_ready: !!(
+                          conversationPanel &&
+                          clipButton &&
+                          messageComposer
+                        ),
                       };
                     });
 
                     console.log("✅ Chat load verification:", chatNowLoaded);
 
-                    if (!chatNowLoaded.conversation_loaded) {
+                    if (!chatNowLoaded.overall_ready) {
                       console.warn(
-                        "⚠️ Chat still not loaded after attempt - media upload may fail"
+                        "⚠️ Chat interface not fully ready after loading attempt:"
+                      );
+                      console.log(
+                        "  - Conversation panel:",
+                        chatNowLoaded.conversation_loaded ? "✅" : "❌"
+                      );
+                      console.log(
+                        "  - Clip button:",
+                        chatNowLoaded.clip_button_available ? "✅" : "❌"
+                      );
+                      console.log(
+                        "  - Message composer:",
+                        chatNowLoaded.message_composer_available ? "✅" : "❌"
+                      );
+                      console.log(
+                        "  - Media input:",
+                        chatNowLoaded.media_input_available ? "✅" : "❌"
+                      );
+                      console.log(
+                        "📝 Media upload may timeout - will use fallback approaches"
                       );
                     } else {
                       console.log(
-                        "✅ Chat successfully loaded - media upload should work"
+                        "✅ Chat interface fully loaded - media upload should work reliably"
                       );
                     }
                   } else {
                     console.log(
-                      "✅ Chat already loaded - proceeding with media upload"
+                      "✅ Chat interface fully loaded - proceeding with media upload"
                     );
                   }
                 } catch (chatLoadError) {
