@@ -280,7 +280,11 @@ const getPuppeteerConfig = async () => {
               .json({ error: "Type harus “text” atau “file”." });
           }
 
-          res.json({ status: "success", id: sent.id._serialized });
+          res.json({
+            status: "success",
+            message_id: sent.id._serialized,
+            from: from,
+          });
         } catch (e) {
           console.error(e);
           res.status(500).json({ status: "error", message: e.message });
