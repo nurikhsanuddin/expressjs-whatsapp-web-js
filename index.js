@@ -1494,7 +1494,13 @@ const monitorResources = () => {
             }
 
             // Enhanced timeout wrapper dengan force kill mechanism
-            const sendWithTimeout = (client, to, media, timeoutMs = 45000) => {
+            const sendWithTimeout = (
+              client,
+              to,
+              media,
+              timeoutMs = 45000,
+              options = {}
+            ) => {
               return new Promise((resolve, reject) => {
                 let isResolved = false;
                 let sendPromise = null;
@@ -1570,9 +1576,14 @@ const monitorResources = () => {
                 );
                 console.log("📤 Memulai client.sendMessage...");
 
+                if (Object.keys(options).length > 0) {
+                  console.log("📋 Send options:", options);
+                }
+
                 // Create the send promise dengan immediate timeout handling
                 try {
-                  sendPromise = client.sendMessage(to, media);
+                  // Official WhatsApp Web.js syntax: client.sendMessage(chatId, media, options)
+                  sendPromise = client.sendMessage(to, media, options);
 
                   // Set a backup timeout just for this promise
                   const promiseTimeout = setTimeout(() => {
@@ -1799,37 +1810,28 @@ const monitorResources = () => {
               let attemptName;
 
               if (isImage) {
-                // Images - try official documentation approach first
-                attemptName = "Image send (official approach)";
-                timeout = 15000; // Reasonable timeout
+                // Images - use EXACT official documentation approach
+                attemptName = "Image send (official documentation)";
+                timeout = 15000;
 
                 console.log(
-                  "🖼️ Image detected - using official WhatsApp Web.js approach"
+                  "🖼️ Image detected - using EXACT official documentation approach"
                 );
                 console.log(
-                  "� This approach bypasses image-specific WhatsApp Web.js issues"
+                  "📚 Following: https://wwebjs.dev/guide/creating-your-bot/handling-attachments.html"
                 );
 
-                // Use the approach that's proven to work: send as document
-                console.log(
-                  "� Converting image to document type for reliable sending"
-                );
+                // EXACT official syntax: new MessageMedia(mimetype, base64data)
                 mediaToSend = new MessageMedia(
-                  req.file.mimetype, // Use original MIME type as per docs
-                  req.file.buffer.toString("base64") // Just base64 data, no filename
-                  // Note: filename is optional parameter, omitting it as per docs
+                  req.file.mimetype,
+                  req.file.buffer.toString("base64")
+                  // NO third parameter (filename) as per official docs
                 );
 
                 console.log(
-                  "📚 Following official docs: https://wwebjs.dev/guide/creating-your-bot/handling-attachments.html"
+                  "✨ Using official syntax: new MessageMedia(mimetype, base64)"
                 );
-                console.log(
-                  "✨ Using MessageMedia(mimetype, base64) - simplified official approach"
-                );
-
-                console.log(
-                  "✨ Using fast document-mode approach that has been proven to work"
-                );
+                console.log("🎯 No filename parameter - exactly as documented");
               } else if (isPDF) {
                 // PDFs work well with standard approach
                 attemptName = "PDF optimized send";
@@ -1860,7 +1862,30 @@ const monitorResources = () => {
                 } detik`
               );
 
-              sent = await sendWithTimeout(client, to, mediaToSend, timeout);
+              // Try sending with optional caption (as per official docs)
+              const sendOptions = {};
+              if (req.file.originalname) {
+                sendOptions.caption = `📎 ${req.file.originalname}`;
+                console.log(
+                  "📝 Adding caption with filename:",
+                  sendOptions.caption
+                );
+              }
+
+              // Official method: client.sendMessage(chatId, media, options)
+              if (Object.keys(sendOptions).length > 0) {
+                console.log("📤 Sending with caption using official syntax");
+                sent = await sendWithTimeout(
+                  client,
+                  to,
+                  mediaToSend,
+                  timeout,
+                  sendOptions
+                );
+              } else {
+                console.log("📤 Sending without caption using official syntax");
+                sent = await sendWithTimeout(client, to, mediaToSend, timeout);
+              }
               console.log(
                 `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
               );
