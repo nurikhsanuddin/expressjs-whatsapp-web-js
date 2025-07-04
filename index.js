@@ -9,7 +9,20 @@ const fs = require("fs");
 const { exec } = require("child_process");
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fieldSize: 50 * 1024 * 1024, // 50MB field size limit
+  },
+});
+
+// Tambah timeout untuk request yang lama (file upload)
+app.use((req, res, next) => {
+  req.setTimeout(300000); // 5 menit timeout
+  res.setTimeout(300000); // 5 menit timeout
+  next();
+});
 
 // Variable untuk menyimpan instance client dan QR code
 let client = null;
@@ -423,6 +436,16 @@ const cleanupSessionFiles = async () => {
   }
 };
 
+// Fungsi helper untuk format bytes (pindahkan ke luar scope)
+const formatBytes = (bytes, decimals = 2) => {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+};
+
 // Implementasi monitoring sumber daya sederhana
 const monitorResources = () => {
   try {
@@ -673,20 +696,46 @@ const monitorResources = () => {
       });
     });
 
-    // Dual-mode route
+    // Dual-mode route dengan error handling yang lebih baik
     app.post(
       "/send-message",
-      // kalau JSON: parse body, kalau multipart: parse file
+      // Middleware untuk parsing berdasarkan content type
       (req, res, next) => {
-        const isJson = req.is("application/json");
-        if (isJson) {
-          express.json()(req, res, next);
+        const contentType = req.get("Content-Type") || "";
+
+        if (contentType.includes("application/json")) {
+          // JSON request
+          express.json({ limit: "50mb" })(req, res, next);
+        } else if (contentType.includes("multipart/form-data")) {
+          // Multipart request dengan file
+          upload.single("file")(req, res, (err) => {
+            if (err) {
+              console.error("Multer error:", err);
+              if (err.code === "LIMIT_FILE_SIZE") {
+                return res.status(413).json({
+                  error: "File terlalu besar",
+                  message: "Maksimal ukuran file adalah 50MB",
+                });
+              }
+              return res.status(400).json({
+                error: "Error upload file",
+                message: err.message,
+              });
+            }
+            next();
+          });
         } else {
-          upload.single("file")(req, res, next);
+          // Default JSON parser
+          express.json({ limit: "50mb" })(req, res, next);
         }
       },
       async (req, res) => {
         try {
+          console.log("📬 Received send-message request");
+          console.log("Content-Type:", req.get("Content-Type"));
+          console.log("Body keys:", Object.keys(req.body));
+          console.log("File:", req.file ? req.file.originalname : "No file");
+
           // Ambil meta (dari JSON atau dari field form-data)
           const meta = req.body.meta
             ? typeof req.body.meta === "string"
@@ -694,72 +743,124 @@ const monitorResources = () => {
               : req.body.meta
             : req.body;
 
+          console.log("Meta data:", meta);
+
+          // Validasi field yang diperlukan
+          if (!meta.from || !meta.to || !meta.type) {
+            return res.status(400).json({
+              error: "Field yang diperlukan tidak lengkap",
+              required: ["from", "to", "type"],
+              received: Object.keys(meta),
+            });
+          }
+
           const from = meta.from.replace(/\D/g, "") + "@c.us";
           const to = meta.to.replace(/\D/g, "") + "@c.us";
 
+          // Cek koneksi WhatsApp
+          if (!client || !client.info) {
+            return res.status(503).json({
+              error: "WhatsApp client tidak terhubung",
+              message: "Silakan scan QR code terlebih dahulu",
+            });
+          }
+
           // Pastikan sesi WhatsApp cocok
-          if (
-            !client.info ||
-            client.info.wid.user !== meta.from.replace(/\D/g, "")
-          ) {
-            return res
-              .status(400)
-              .json({ error: 'Nomor "from" tidak sama dengan sesi WhatsApp.' });
+          if (client.info.wid.user !== meta.from.replace(/\D/g, "")) {
+            return res.status(400).json({
+              error: 'Nomor "from" tidak sama dengan sesi WhatsApp.',
+              expected: client.info.wid.user,
+              received: meta.from.replace(/\D/g, ""),
+            });
           }
 
           let sent;
           if (meta.type === "text") {
+            if (!meta.content) {
+              return res.status(400).json({
+                error: "Content text tidak boleh kosong",
+              });
+            }
+            console.log(`💬 Mengirim pesan teks ke ${meta.to}`);
             sent = await client.sendMessage(to, meta.content);
           } else if (meta.type === "file") {
             if (!req.file) {
-              return res
-                .status(400)
-                .json({ error: "File tidak ditemukan di multipart." });
+              return res.status(400).json({
+                error: "File tidak ditemukan di multipart request",
+                message: "Pastikan field 'file' ada dalam form-data",
+              });
             }
-            const media = new MessageMedia(
-              req.file.mimetype,
-              req.file.buffer.toString("base64"),
-              req.file.originalname
-            );
+
+            // Validasi file
+            const allowedTypes = [
+              "image/jpeg",
+              "image/png",
+              "image/gif",
+              "image/webp",
+              "application/pdf",
+              "text/plain",
+              "application/msword",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "video/mp4",
+              "video/avi",
+              "video/mov",
+              "audio/mp3",
+              "audio/wav",
+            ];
+
+            if (!allowedTypes.includes(req.file.mimetype)) {
+              return res.status(400).json({
+                error: "Tipe file tidak didukung",
+                allowed: allowedTypes,
+                received: req.file.mimetype,
+              });
+            }
+
             console.log(
               `📤 Mengirim file: ${req.file.originalname} (${formatBytes(
                 req.file.size
               )})`
             );
+
+            const media = new MessageMedia(
+              req.file.mimetype,
+              req.file.buffer.toString("base64"),
+              req.file.originalname
+            );
+
             sent = await client.sendMessage(to, media);
             console.log(
               `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
             );
-
-            // Fungsi formatBytes (tambahkan jika belum ada)
-            function formatBytes(bytes, decimals = 2) {
-              if (bytes === 0) return "0 Bytes";
-              const k = 1024;
-              const dm = decimals < 0 ? 0 : decimals;
-              const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-              const i = Math.floor(Math.log(bytes) / Math.log(k));
-              return (
-                parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) +
-                " " +
-                sizes[i]
-              );
-            }
           } else {
-            return res
-              .status(400)
-              .json({ error: 'Type harus "text" atau "file".' });
+            return res.status(400).json({
+              error: 'Type harus "text" atau "file".',
+              received: meta.type,
+            });
           }
 
-          res.json({
+          // Validasi apakah message berhasil dikirim
+          if (!sent || !sent.id) {
+            throw new Error("Pesan gagal dikirim - tidak ada response ID");
+          }
+
+          const response = {
             status: "success",
             message: "Message sent successfully",
-            mid: sent.id._serialized.split("_")[2], // Extract only the message ID part
+            mid: sent.id._serialized.split("_")[2] || sent.id._serialized,
             from: meta.from.replace(/\D/g, ""),
             to: meta.to.replace(/\D/g, ""),
-          });
+          };
+
+          console.log("✅ Response:", response);
+          res.json(response);
         } catch (e) {
-          console.error(e);
-          res.status(500).json({ status: "error", message: e.message });
+          console.error("❌ Error in send-message:", e);
+          res.status(500).json({
+            status: "error",
+            message: e.message,
+            timestamp: new Date().toISOString(),
+          });
         }
       }
     );
