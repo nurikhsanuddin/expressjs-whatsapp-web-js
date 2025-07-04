@@ -13,10 +13,12 @@ module.exports = {
       },
       // Pengaturan khusus PM2 untuk kinerja lebih baik
       node_args: "--max-old-space-size=256", // Batasi memory heap Node.js
-      kill_timeout: 5000, // Beri waktu 5 detik untuk graceful shutdown
+      kill_timeout: 10000, // Beri waktu 10 detik untuk graceful shutdown
       wait_ready: true, // Tunggu hingga aplikasi mengirim sinyal "ready"
       listen_timeout: 15000, // Tunggu 15 detik sampai aplikasi siap
       max_restarts: 10, // Batasi jumlah restart otomatis
+      // Pengaturan mode eksekusi
+      exec_mode: "fork", // Gunakan mode fork, bukan cluster
       // Capture dan log semua output
       merge_logs: true,
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
@@ -26,8 +28,11 @@ module.exports = {
       restart_delay: 2000, // Delay antara restart (ms)
       // Optimasi sumber daya PM2
       min_uptime: "60s", // Aplikasi harus berjalan setidaknya 60 detik untuk dianggap stabil
-      listen_timeout: 10000, // Waktu (ms) untuk menganggap aplikasi berhasil start
       max_memory_restart: "400M", // Restart jika memori di atas 400MB
+      // Nonaktifkan pemantauan status
+      ignore_watch: ["node_modules", ".git", ".wwebjs_auth"],
+      // Pengaturan untuk mengatasi masalah pidusage
+      treekill: false, // Jangan gunakan tree-kill saat menghentikan proses
     },
   ],
 };
