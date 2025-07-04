@@ -940,26 +940,26 @@ const monitorResources = () => {
     app.get("/media-diagnostics", async (req, res) => {
       try {
         console.log("🔍 MEDIA DIAGNOSTICS REQUEST");
-        
+
         const diagnostics = {
           timestamp: new Date().toISOString(),
           client_status: {
             initialized: !!client,
             authenticated: !!(client && client.info),
-            ready: !!(client && client.info)
+            ready: !!(client && client.info),
           },
           browser_status: {
             available: false,
             url: null,
             title: null,
-            whatsapp_loaded: false
+            whatsapp_loaded: false,
           },
           media_capabilities: {
-            message_media_class: typeof MessageMedia !== 'undefined',
+            message_media_class: typeof MessageMedia !== "undefined",
             can_create_media: false,
             whatsapp_store_available: false,
-            media_upload_elements: {}
-          }
+            media_upload_elements: {},
+          },
         };
 
         if (client) {
@@ -976,22 +976,28 @@ const monitorResources = () => {
               diagnostics.browser_status.available = true;
               diagnostics.browser_status.url = await client.pupPage.url();
               diagnostics.browser_status.title = await client.pupPage.title();
-              
+
               // Check WhatsApp Web specific elements
               const whatsappCheck = await client.pupPage.evaluate(() => {
                 return {
-                  store_available: typeof window.Store !== 'undefined',
-                  wwebjs_available: typeof window.WWebJS !== 'undefined',
+                  store_available: typeof window.Store !== "undefined",
+                  wwebjs_available: typeof window.WWebJS !== "undefined",
                   clip_button: !!document.querySelector('[data-testid="clip"]'),
-                  media_input: !!document.querySelector('input[accept*="image"]'),
-                  chat_loaded: !!document.querySelector('[data-testid="conversation-panel"]')
+                  media_input: !!document.querySelector(
+                    'input[accept*="image"]'
+                  ),
+                  chat_loaded: !!document.querySelector(
+                    '[data-testid="conversation-panel"]'
+                  ),
                 };
               });
-              
-              diagnostics.browser_status.whatsapp_loaded = whatsappCheck.store_available;
-              diagnostics.media_capabilities.whatsapp_store_available = whatsappCheck.store_available;
-              diagnostics.media_capabilities.media_upload_elements = whatsappCheck;
-              
+
+              diagnostics.browser_status.whatsapp_loaded =
+                whatsappCheck.store_available;
+              diagnostics.media_capabilities.whatsapp_store_available =
+                whatsappCheck.store_available;
+              diagnostics.media_capabilities.media_upload_elements =
+                whatsappCheck;
             } catch (browserError) {
               diagnostics.browser_status.error = browserError.message;
             }
@@ -999,11 +1005,17 @@ const monitorResources = () => {
 
           // Test MessageMedia creation
           try {
-            const testMedia = new MessageMedia('text/plain', 'dGVzdA==', 'test.txt');
+            const testMedia = new MessageMedia(
+              "text/plain",
+              "dGVzdA==",
+              "test.txt"
+            );
             diagnostics.media_capabilities.can_create_media = true;
-            diagnostics.media_capabilities.test_media_size = testMedia.data.length;
+            diagnostics.media_capabilities.test_media_size =
+              testMedia.data.length;
           } catch (mediaError) {
-            diagnostics.media_capabilities.media_creation_error = mediaError.message;
+            diagnostics.media_capabilities.media_creation_error =
+              mediaError.message;
           }
         }
 
@@ -1021,19 +1033,19 @@ const monitorResources = () => {
     app.post("/test-text", async (req, res) => {
       try {
         console.log("📝 QUICK TEXT TEST");
-        
+
         const { to, message } = req.body;
-        
+
         if (!to || !message) {
           return res.status(400).json({
             error: "Missing required fields",
-            required: ["to", "message"]
+            required: ["to", "message"],
           });
         }
 
         if (!client || !client.info) {
           return res.status(503).json({
-            error: "WhatsApp client not connected"
+            error: "WhatsApp client not connected",
           });
         }
 
@@ -1041,12 +1053,12 @@ const monitorResources = () => {
         const testMessage = `🧪 TEST: ${message}\nTimestamp: ${new Date().toISOString()}`;
 
         console.log(`📤 Sending test message to ${targetNumber}`);
-        
+
         const sent = await Promise.race([
           client.sendMessage(targetNumber, testMessage),
-          new Promise((_, reject) => 
+          new Promise((_, reject) =>
             setTimeout(() => reject(new Error("Text message timeout")), 10000)
-          )
+          ),
         ]);
 
         console.log("✅ Test message sent:", sent.id._serialized);
@@ -1055,15 +1067,14 @@ const monitorResources = () => {
           status: "success",
           message_id: sent.id._serialized,
           to: targetNumber,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
-
       } catch (error) {
         console.error("❌ Text test failed:", error.message);
         res.status(500).json({
           error: "Text test failed",
           message: error.message,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     });
@@ -1392,6 +1403,88 @@ const monitorResources = () => {
                 if (client.pupPage.isClosed()) {
                   throw new Error("Browser page telah ditutup");
                 }
+
+                // CRITICAL FIX: Ensure chat is loaded before sending media
+                console.log(
+                  "🔄 CRITICAL FIX: Ensuring target chat is loaded..."
+                );
+                try {
+                  // Check if any chat is currently loaded
+                  const chatLoaded = await client.pupPage.evaluate(() => {
+                    return !!document.querySelector(
+                      '[data-testid="conversation-panel"]'
+                    );
+                  });
+
+                  console.log("💬 Chat currently loaded:", chatLoaded);
+
+                  if (!chatLoaded) {
+                    console.log(
+                      "🔄 No chat loaded - attempting to open target chat..."
+                    );
+
+                    // Try to get and open the target chat
+                    const targetChat = await client.getChatById(to);
+                    console.log("📱 Target chat found:", {
+                      name: targetChat.name || "Unknown",
+                      id: targetChat.id._serialized,
+                    });
+
+                    // Use WhatsApp Web.js internal method to open chat
+                    await client.pupPage.evaluate((chatId) => {
+                      if (window.Store && window.Store.Chat) {
+                        const chat = window.Store.Chat.get(chatId);
+                        if (chat) {
+                          window.Store.Cmd.openChatAt(chat);
+                          return true;
+                        }
+                      }
+                      return false;
+                    }, to);
+
+                    // Wait for chat to load
+                    console.log("⏳ Waiting for chat interface to load...");
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+                    // Verify chat is now loaded
+                    const chatNowLoaded = await client.pupPage.evaluate(() => {
+                      const conversationPanel = document.querySelector(
+                        '[data-testid="conversation-panel"]'
+                      );
+                      const clipButton = document.querySelector(
+                        '[data-testid="clip"]'
+                      );
+                      return {
+                        conversation_loaded: !!conversationPanel,
+                        clip_button_available: !!clipButton,
+                      };
+                    });
+
+                    console.log("✅ Chat load verification:", chatNowLoaded);
+
+                    if (!chatNowLoaded.conversation_loaded) {
+                      console.warn(
+                        "⚠️ Chat still not loaded after attempt - media upload may fail"
+                      );
+                    } else {
+                      console.log(
+                        "✅ Chat successfully loaded - media upload should work"
+                      );
+                    }
+                  } else {
+                    console.log(
+                      "✅ Chat already loaded - proceeding with media upload"
+                    );
+                  }
+                } catch (chatLoadError) {
+                  console.warn(
+                    "⚠️ Chat loading attempt failed:",
+                    chatLoadError.message
+                  );
+                  console.log(
+                    "📝 Will proceed anyway - fallback may be triggered"
+                  );
+                }
               } catch (pageError) {
                 console.error("❌ Browser page error:", pageError.message);
                 throw new Error(
@@ -1608,14 +1701,21 @@ const monitorResources = () => {
                 console.log("🌐 Page title:", title);
 
                 // Advanced browser diagnostics for media issues
-                console.log("🔍 ADVANCED: Checking WhatsApp Web media capabilities...");
+                console.log(
+                  "🔍 ADVANCED: Checking WhatsApp Web media capabilities..."
+                );
                 try {
                   // Check if WhatsApp Web has loaded properly
                   const hasWhatsAppStore = await client.pupPage.evaluate(() => {
-                    return typeof window.Store !== 'undefined' && 
-                           typeof window.WWebJS !== 'undefined';
+                    return (
+                      typeof window.Store !== "undefined" &&
+                      typeof window.WWebJS !== "undefined"
+                    );
                   });
-                  console.log("📱 WhatsApp Web Store loaded:", hasWhatsAppStore);
+                  console.log(
+                    "📱 WhatsApp Web Store loaded:",
+                    hasWhatsAppStore
+                  );
 
                   // Check for any JavaScript errors in the browser console
                   const jsErrors = await client.pupPage.evaluate(() => {
@@ -1627,23 +1727,54 @@ const monitorResources = () => {
                   }
 
                   // Check network connectivity within the browser
-                  const isOnline = await client.pupPage.evaluate(() => navigator.onLine);
+                  const isOnline = await client.pupPage.evaluate(
+                    () => navigator.onLine
+                  );
                   console.log("🌐 Browser reports online:", isOnline);
 
                   // Check if media upload elements are present
                   const hasMediaElements = await client.pupPage.evaluate(() => {
-                    const clipButton = document.querySelector('[data-testid="clip"]');
-                    const mediaInput = document.querySelector('input[accept="image/*,video/mp4,video/3gpp,video/quicktime"]');
+                    const clipButton = document.querySelector(
+                      '[data-testid="clip"]'
+                    );
+                    const mediaInput = document.querySelector(
+                      'input[accept*="image"]'
+                    );
+                    const conversationPanel = document.querySelector(
+                      '[data-testid="conversation-panel"]'
+                    );
+                    const messageComposer = document.querySelector(
+                      '[data-testid="conversation-compose-box-input"]'
+                    );
+
                     return {
                       clipButton: !!clipButton,
                       mediaInput: !!mediaInput,
-                      clipButtonVisible: clipButton ? !clipButton.hidden : false
+                      clipButtonVisible: clipButton
+                        ? !clipButton.hidden
+                        : false,
+                      conversationPanel: !!conversationPanel,
+                      messageComposer: !!messageComposer,
+                      chatReady: !!(conversationPanel && clipButton),
                     };
                   });
                   console.log("📎 Media upload elements:", hasMediaElements);
 
+                  if (!hasMediaElements.chatReady) {
+                    console.warn(
+                      "⚠️ Chat interface not ready for media upload"
+                    );
+                    console.log(
+                      "🔄 This may cause media send timeout - fallback will be used"
+                    );
+                  } else {
+                    console.log("✅ Chat interface ready for media upload");
+                  }
                 } catch (advancedDiagError) {
-                  console.warn("⚠️ Advanced diagnostics failed:", advancedDiagError.message);
+                  console.warn(
+                    "⚠️ Advanced diagnostics failed:",
+                    advancedDiagError.message
+                  );
                 }
               } else {
                 console.warn("⚠️ No browser page available");
