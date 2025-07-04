@@ -11,9 +11,10 @@ const { exec } = require("child_process");
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Variable untuk menyimpan instance client
+// Variable untuk menyimpan instance client dan QR code
 let client = null;
 let browserInstance = null;
+let currentQRCode = null;
 
 // Tambahkan fungsi bantuan untuk mendapatkan PID browser
 const getBrowserPid = (browser) => {
@@ -99,13 +100,34 @@ const findChromeBrowser = () => {
         "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
         "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      ];
+        // Add more possible Windows paths
+        process.env.LOCALAPPDATA + "\\Google\\Chrome\\Application\\chrome.exe",
+        process.env.PROGRAMFILES + "\\Google\\Chrome\\Application\\chrome.exe",
+        process.env["PROGRAMFILES(X86)"] +
+          "\\Google\\Chrome\\Application\\chrome.exe",
+      ].filter(Boolean); // Remove undefined entries
 
       for (const browserPath of commonPaths) {
-        if (fs.existsSync(browserPath)) {
-          return resolve(browserPath);
+        try {
+          if (fs.existsSync(browserPath)) {
+            return resolve(browserPath);
+          }
+        } catch (err) {
+          // Continue to next path if there's an access error
+          continue;
         }
       }
+
+      // If no browser found, try using 'where' command on Windows
+      exec("where chrome.exe", (error, stdout) => {
+        if (!error && stdout) {
+          const browserPath = stdout.split("\n")[0].trim();
+          if (browserPath && fs.existsSync(browserPath)) {
+            return resolve(browserPath);
+          }
+        }
+        resolve(null);
+      });
     } else {
       // Di Linux/Mac, gunakan which command
       exec(
@@ -125,7 +147,7 @@ const findChromeBrowser = () => {
     }
 
     // Default resolver jika tidak ada yang cocok
-    setTimeout(() => resolve(null), 1000);
+    setTimeout(() => resolve(null), 2000);
   });
 };
 
@@ -142,8 +164,6 @@ const getPuppeteerConfig = async () => {
     "--disable-dev-shm-usage",
     "--disable-accelerated-2d-canvas",
     "--no-first-run",
-    "--no-zygote",
-    "--single-process",
     "--js-flags=--max-old-space-size=" + jsMemoryLimit, // Limit JavaScript memory dari env
     "--disable-extensions", // Disable extensions
     "--disable-component-extensions-with-background-pages",
@@ -156,6 +176,18 @@ const getPuppeteerConfig = async () => {
     "--disk-cache-size=" + diskCacheSize, // Batasi ukuran cache disk
     "--media-cache-size=" + diskCacheSize, // Batasi ukuran cache media
   ];
+
+  // Add Windows-specific arguments
+  if (process.platform === "win32") {
+    defaultArgs.push("--disable-features=VizDisplayCompositor");
+  } else {
+    // Linux/Mac specific arguments
+    defaultArgs.push("--no-zygote");
+    // Only use single-process on Linux if specifically enabled
+    if (process.env.USE_SINGLE_PROCESS === "true") {
+      defaultArgs.push("--single-process");
+    }
+  }
 
   // Add memory cache if enabled in environment
   if (process.env.USE_MEMORY_CACHE === "true") {
@@ -176,7 +208,7 @@ const getPuppeteerConfig = async () => {
     defaultArgs.push("--disable-gpu");
     console.log("GPU disabled for better compatibility");
   }
-  
+
   // Disable images and sounds if configured
   if (process.env.DISABLE_IMAGES === "true") {
     defaultArgs.push("--blink-settings=imagesEnabled=false");
@@ -254,8 +286,10 @@ const getPuppeteerConfig = async () => {
     }
   }
 
+  const isHeadless = process.env.HEADLESS_MODE === "true";
+
   const config = {
-    headless: "new", // Use new headless mode for better performance
+    headless: isHeadless, // Configurable headless mode
     args: defaultArgs,
     ignoreDefaultArgs: ["--enable-automation"], // Disable automation flag
     ignoreHTTPSErrors: true,
@@ -266,6 +300,17 @@ const getPuppeteerConfig = async () => {
       deviceScaleFactor: 1,
     },
   };
+
+  // Log headless mode status
+  if (isHeadless) {
+    console.log(
+      "🔕 HEADLESS MODE: Browser akan berjalan tanpa tampilan visual"
+    );
+    console.log("📋 QR Code akan ditampilkan di terminal ini");
+  } else {
+    console.log("🌐 BROWSER MODE: Browser window akan terbuka");
+    console.log("📋 QR Code akan muncul di browser dan terminal");
+  }
 
   if (isProduction) {
     console.log("Running in production mode");
@@ -280,8 +325,25 @@ const getPuppeteerConfig = async () => {
   } else {
     // In development, try to use the local Chrome executable
     console.log("Running in development mode - using local Chrome");
-    config.executablePath = puppeteer.executablePath();
+    try {
+      config.executablePath = puppeteer.executablePath();
+    } catch (err) {
+      console.warn("Could not get puppeteer executable path:", err.message);
+      if (chromePath) {
+        console.log(`Falling back to detected Chrome at: ${chromePath}`);
+        config.executablePath = chromePath;
+      }
+    }
   }
+
+  // Debug: log final configuration
+  console.log("Final puppeteer config:", {
+    headless: config.headless,
+    mode: config.headless ? "HEADLESS" : "BROWSER WINDOW",
+    executablePath: config.executablePath || "default",
+    argsCount: config.args.length,
+    timeout: config.protocolTimeout,
+  });
 
   return config;
 };
@@ -400,23 +462,43 @@ const monitorResources = () => {
     // Inisialisasi WhatsApp client dengan konfigurasi yang didapat
     client = new Client({
       authStrategy: new LocalAuth(),
-      puppeteer: {
-        ...puppeteerConfig,
-        // Menangkap browser instance untuk dikelola nanti
-        browserWSEndpoint: null, // Paksa pembuatan instance baru
-        browser: async (browser) => {
-          browserInstance = browser;
-          const pid = getBrowserPid(browser);
-          console.log(
-            `🌐 Browser instance created for WhatsApp Web JS with PID: ${pid}`
-          );
-          return browser;
-        },
-      },
+      puppeteer: puppeteerConfig,
     });
 
-    client.on("qr", (qr) => qrcode.generate(qr, { small: true }));
-    client.on("ready", () => console.log("✅ WhatsApp ready!"));
+    client.on("qr", (qr) => {
+      currentQRCode = qr; // Simpan QR code untuk endpoint
+      console.log("\n" + "=".repeat(60));
+      if (process.env.HEADLESS_MODE === "true") {
+        console.log("🔍 HEADLESS MODE AKTIF - QR Code ditampilkan di terminal");
+        console.log("📱 Scan QR code di bawah ini dengan WhatsApp di HP Anda:");
+        console.log(
+          "🌐 Atau akses http://localhost:" +
+            (process.env.PORT || 3626) +
+            "/qr untuk melihat QR code di browser"
+        );
+      } else {
+        console.log(
+          "🌐 Browser mode aktif - QR code akan muncul di browser DAN terminal"
+        );
+        console.log("📱 Scan QR code dengan WhatsApp di HP Anda:");
+      }
+      console.log("=".repeat(60));
+      qrcode.generate(qr, { small: true });
+      console.log("=".repeat(60));
+      console.log("⏳ Menunggu scan QR code...\n");
+    });
+
+    // Capture browser instance after client initialization
+    client.on("ready", () => {
+      currentQRCode = null; // Clear QR code setelah berhasil login
+      if (client.pupPage && client.pupPage.browser) {
+        browserInstance = client.pupPage.browser();
+        const pid = getBrowserPid(browserInstance);
+        console.log(`🌐 Browser instance captured with PID: ${pid}`);
+      }
+      console.log("✅ WhatsApp ready!");
+    });
+
     client.on("auth_failure", (msg) =>
       console.error(`⚠️ WhatsApp authentication failed: ${msg}`)
     );
@@ -488,6 +570,93 @@ const monitorResources = () => {
       next();
     });
 
+    // QR Code endpoint untuk headless mode
+    app.get("/qr", (req, res) => {
+      if (!currentQRCode) {
+        return res.status(404).json({
+          error: "QR Code tidak tersedia",
+          message: "QR Code belum di-generate atau WhatsApp sudah terhubung",
+        });
+      }
+
+      // Generate QR code sebagai data URL untuk ditampilkan di browser
+      const QRCode = require("qrcode");
+      QRCode.toDataURL(currentQRCode, (err, url) => {
+        if (err) {
+          return res.status(500).json({ error: "Gagal generate QR code" });
+        }
+
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>WhatsApp QR Code</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body { 
+                font-family: Arial, sans-serif; 
+                text-align: center; 
+                padding: 20px; 
+                background: #f5f5f5;
+              }
+              .container {
+                max-width: 400px;
+                margin: 0 auto;
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              }
+              .qr-code {
+                margin: 20px 0;
+                max-width: 100%;
+                height: auto;
+              }
+              .instructions {
+                color: #666;
+                margin-top: 20px;
+                line-height: 1.5;
+              }
+              .refresh-btn {
+                background: #25D366;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                margin-top: 15px;
+              }
+              .refresh-btn:hover {
+                background: #128C7E;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h2>📱 WhatsApp QR Code</h2>
+              <img src="${url}" alt="WhatsApp QR Code" class="qr-code">
+              <div class="instructions">
+                <p><strong>Cara menggunakan:</strong></p>
+                <p>1. Buka WhatsApp di HP Anda</p>
+                <p>2. Tap menu ⋮ (titik tiga) → Perangkat Tertaut</p>
+                <p>3. Tap "Tautkan Perangkat"</p>
+                <p>4. Scan QR code di atas</p>
+              </div>
+              <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
+            </div>
+            <script>
+              // Auto refresh setiap 30 detik
+              setTimeout(() => location.reload(), 30000);
+            </script>
+          </body>
+          </html>
+        `;
+
+        res.send(html);
+      });
+    });
+
     // Status endpoint to check connection status
     app.get("/status", (req, res) => {
       const isConnected = client.info ? true : false;
@@ -499,6 +668,8 @@ const monitorResources = () => {
               name: client.info.pushname,
             }
           : null,
+        qr_available: currentQRCode ? true : false,
+        headless_mode: process.env.HEADLESS_MODE === "true",
       });
     });
 
@@ -533,7 +704,7 @@ const monitorResources = () => {
           ) {
             return res
               .status(400)
-              .json({ error: "Nomor “from” tidak sama dengan sesi WhatsApp." });
+              .json({ error: 'Nomor "from" tidak sama dengan sesi WhatsApp.' });
           }
 
           let sent;
@@ -576,7 +747,7 @@ const monitorResources = () => {
           } else {
             return res
               .status(400)
-              .json({ error: "Type harus “text” atau “file”." });
+              .json({ error: 'Type harus "text" atau "file".' });
           }
 
           res.json({
@@ -595,6 +766,11 @@ const monitorResources = () => {
     const PORT = process.env.PORT || 3626;
     const server = app.listen(PORT, () => {
       console.log(`🚀 Running on http://localhost:${PORT}`);
+
+      if (process.env.HEADLESS_MODE === "true") {
+        console.log(`🔗 QR Code endpoint: http://localhost:${PORT}/qr`);
+        console.log(`📊 Status endpoint: http://localhost:${PORT}/status`);
+      }
 
       // Beri tahu PM2 bahwa aplikasi sudah siap (jika berjalan di PM2)
       if (process.send) {
@@ -629,7 +805,7 @@ const monitorResources = () => {
         } minutes)`
       );
     });
-    
+
     // Tambahkan event listener untuk menutup server dengan benar
     const handleServerShutdown = (signal) => {
       console.log(`Received ${signal}, shutting down server gracefully`);
@@ -638,7 +814,7 @@ const monitorResources = () => {
         gracefulShutdown();
       });
     };
-    
+
     // Use the server-specific shutdown handlers
     process.on("SIGTERM", () => handleServerShutdown("SIGTERM"));
     process.on("SIGINT", () => handleServerShutdown("SIGINT"));
