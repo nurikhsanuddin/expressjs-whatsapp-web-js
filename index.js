@@ -29,6 +29,78 @@ let client = null;
 let browserInstance = null;
 let currentQRCode = null;
 
+// Client health check and refresh functionality
+const checkClientHealth = async () => {
+  try {
+    if (!client) {
+      return { healthy: false, reason: "Client not initialized" };
+    }
+
+    if (!client.info) {
+      return { healthy: false, reason: "Client not authenticated" };
+    }
+
+    // Check if browser page is accessible
+    if (!client.pupPage) {
+      return { healthy: false, reason: "Browser page not available" };
+    }
+
+    // Try to get current URL to test browser connectivity
+    try {
+      const url = await Promise.race([
+        client.pupPage.url(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("URL check timeout")), 3000)
+        ),
+      ]);
+
+      if (!url.includes("web.whatsapp.com")) {
+        return { healthy: false, reason: "Not on WhatsApp Web page" };
+      }
+    } catch (urlError) {
+      return {
+        healthy: false,
+        reason: `Browser access error: ${urlError.message}`,
+      };
+    }
+
+    return { healthy: true };
+  } catch (error) {
+    return { healthy: false, reason: `Health check error: ${error.message}` };
+  }
+};
+
+const refreshClientConnection = async () => {
+  console.log("🔄 Attempting to refresh client connection...");
+
+  try {
+    // Try to refresh the page
+    if (client && client.pupPage) {
+      await client.pupPage.reload({
+        waitUntil: "networkidle0",
+        timeout: 10000,
+      });
+      console.log("🔄 Browser page refreshed");
+
+      // Wait a bit for WhatsApp Web to load
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // Check if we're still authenticated
+      if (client.info) {
+        console.log("✅ Client connection refreshed successfully");
+        return true;
+      } else {
+        console.log("❌ Client lost authentication after refresh");
+        return false;
+      }
+    }
+  } catch (refreshError) {
+    console.error("❌ Client refresh failed:", refreshError.message);
+  }
+
+  return false;
+};
+
 // Tambahkan fungsi bantuan untuk mendapatkan PID browser
 const getBrowserPid = (browser) => {
   if (browser && browser.process && typeof browser.process === "function") {
@@ -1344,6 +1416,80 @@ const monitorResources = () => {
             };
 
             // Special handling for different file types - variables already declared above
+
+            // DEEP DIAGNOSTICS: Check client and browser state before attempting send
+            console.log(
+              "🔍 DEEP DIAGNOSTICS: Checking WhatsApp Web.js client state..."
+            );
+
+            // Perform comprehensive health check
+            const healthStatus = await checkClientHealth();
+            console.log("🏥 Client health status:", healthStatus);
+
+            if (!healthStatus.healthy) {
+              console.warn(
+                "⚠️ Client health issue detected:",
+                healthStatus.reason
+              );
+              console.log("🔄 Attempting to refresh client connection...");
+
+              const refreshSuccess = await refreshClientConnection();
+              if (!refreshSuccess) {
+                console.error(
+                  "❌ Client refresh failed - proceeding with caution"
+                );
+                console.log(
+                  "💡 Recommendation: Restart the WhatsApp Web.js service"
+                );
+              } else {
+                console.log(
+                  "✅ Client refresh successful - proceeding with send"
+                );
+              }
+            } else {
+              console.log("✅ Client health check passed");
+            }
+
+            // Additional diagnostics
+            try {
+              const clientState = client ? client.info : null;
+              console.log(
+                "📱 Client authenticated:",
+                clientState ? "Yes" : "No"
+              );
+
+              if (clientState) {
+                console.log("📱 Client details:", {
+                  platform: clientState.platform,
+                  name: clientState.pushname,
+                  number: clientState.wid?.user,
+                });
+              }
+
+              // Browser diagnostics
+              if (client.pupPage) {
+                console.log("🌐 Browser page accessible");
+                const url = await client.pupPage.url();
+                console.log("🌐 Current URL:", url);
+
+                const title = await client.pupPage.title();
+                console.log("🌐 Page title:", title);
+              } else {
+                console.warn("⚠️ No browser page available");
+              }
+
+              // File diagnostics
+              console.log("📁 File details:", {
+                size: req.file.buffer.length + " bytes",
+                type: req.file.mimetype,
+                name: req.file.originalname,
+              });
+            } catch (diagnosticError) {
+              console.error(
+                "❌ Diagnostic check failed:",
+                diagnosticError.message
+              );
+            }
 
             try {
               let mediaToSend;
