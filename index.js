@@ -446,7 +446,7 @@ const formatBytes = (bytes, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 };
 
-// Implementasi monitoring sumber daya sederhana
+// Implementasi monitoring sumber daya yang lebih detail
 const monitorResources = () => {
   try {
     const memoryUsage = process.memoryUsage();
@@ -457,22 +457,54 @@ const monitorResources = () => {
       external: Math.round(memoryUsage.external / 1024 / 1024),
     };
 
-    console.log("📊 Penggunaan Memori (MB):", {
-      total_rss: memoryUsageMB.rss,
-      heap_total: memoryUsageMB.heapTotal,
-      heap_used: memoryUsageMB.heapUsed,
-      external: memoryUsageMB.external,
+    const uptime = Math.round(process.uptime());
+    const cpuUsage = process.cpuUsage();
+    
+    console.log("📊 Resource Usage:", {
+      memory_mb: memoryUsageMB,
+      uptime_seconds: uptime,
+      cpu_user_ms: Math.round(cpuUsage.user / 1000),
+      cpu_system_ms: Math.round(cpuUsage.system / 1000),
+      client_status: client && client.info ? 'connected' : 'disconnected',
+      qr_available: currentQRCode ? true : false
     });
 
-    // Peringatan jika penggunaan memori tinggi
-    const memoryThreshold = 200; // MB
-    if (memoryUsageMB.rss > memoryThreshold) {
+    // Memory thresholds dan peringatan
+    const memoryThreshold = parseInt(process.env.MEMORY_THRESHOLD_MB) || 200;
+    const criticalThreshold = memoryThreshold * 1.5;
+    
+    if (memoryUsageMB.rss > criticalThreshold) {
+      console.error(
+        `🚨 CRITICAL: Memory usage ${memoryUsageMB.rss}MB > ${criticalThreshold}MB`
+      );
+      // Log memory breakdown for debugging
+      console.error("Memory breakdown:", memoryUsageMB);
+    } else if (memoryUsageMB.rss > memoryThreshold) {
       console.warn(
-        `⚠️ Penggunaan memori tinggi: ${memoryUsageMB.rss}MB > ${memoryThreshold}MB`
+        `⚠️ HIGH: Memory usage ${memoryUsageMB.rss}MB > ${memoryThreshold}MB`
       );
     }
+
+    // Check browser process jika ada
+    if (client && client.pupBrowser) {
+      try {
+        const browserConnected = client.pupBrowser.isConnected();
+        if (!browserConnected) {
+          console.warn("⚠️ Browser process disconnected");
+        }
+      } catch (browserErr) {
+        console.warn("⚠️ Cannot check browser status:", browserErr.message);
+      }
+    }
+
+    // Garbage collection hint jika memory usage tinggi
+    if (memoryUsageMB.heapUsed > memoryThreshold * 0.8 && global.gc) {
+      console.log("🧹 Running garbage collection...");
+      global.gc();
+    }
+
   } catch (err) {
-    console.error("❌ Error saat monitoring sumber daya:", err.message);
+    console.error("❌ Error monitoring resources:", err.message);
   }
 };
 
@@ -696,6 +728,66 @@ const monitorResources = () => {
       });
     });
 
+    // Health check endpoint dengan detail lengkap untuk debugging
+    app.get("/health", async (req, res) => {
+      try {
+        const health = {
+          timestamp: new Date().toISOString(),
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          pid: process.pid,
+          node_version: process.version,
+          platform: process.platform,
+          client: {
+            initialized: client ? true : false,
+            connected: client && client.info ? true : false,
+            qr_available: currentQRCode ? true : false,
+          }
+        };
+
+        if (client) {
+          try {
+            const state = await client.getState();
+            health.client.state = state;
+            health.client.connected = state === 'CONNECTED';
+          } catch (stateError) {
+            health.client.state_error = stateError.message;
+          }
+
+          if (client.info) {
+            health.client.info = {
+              phone: client.info.wid.user,
+              name: client.info.pushname,
+              platform: client.info.platform
+            };
+          }
+        }
+
+        // Check browser process status
+        if (client && client.pupPage) {
+          try {
+            health.browser = {
+              connected: !client.pupPage.isClosed(),
+              url: client.pupPage.url()
+            };
+          } catch (browserError) {
+            health.browser = {
+              error: browserError.message
+            };
+          }
+        }
+
+        const statusCode = health.client.connected ? 200 : 503;
+        res.status(statusCode).json(health);
+      } catch (error) {
+        res.status(500).json({
+          error: "Health check failed",
+          message: error.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+
     // Dual-mode route dengan error handling yang lebih baik
     app.post(
       "/send-message",
@@ -822,16 +914,65 @@ const monitorResources = () => {
               )})`
             );
 
+            // Verifikasi koneksi WhatsApp sebelum mengirim file
+            console.log("🔍 Memverifikasi koneksi WhatsApp...");
+            try {
+              const state = await client.getState();
+              console.log("📱 Status WhatsApp:", state);
+              
+              if (state !== 'CONNECTED') {
+                throw new Error(`WhatsApp tidak terhubung. Status: ${state}`);
+              }
+            } catch (stateError) {
+              console.error("❌ Error mendapatkan status WhatsApp:", stateError.message);
+              throw new Error(`Gagal verifikasi koneksi WhatsApp: ${stateError.message}`);
+            }
+
             const media = new MessageMedia(
               req.file.mimetype,
               req.file.buffer.toString("base64"),
               req.file.originalname
             );
 
-            sent = await client.sendMessage(to, media);
-            console.log(
-              `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
-            );
+            console.log("🔄 Memulai proses pengiriman file ke WhatsApp...");
+            console.log("📊 Media info:", {
+              type: media.mimetype,
+              filename: media.filename,
+              size: `${Math.round(media.data.length / 1024)} KB`
+            });
+            
+            // Wrapper dengan timeout untuk operasi sendMessage
+            const sendWithTimeout = (client, to, media, timeoutMs = 120000) => {
+              return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                  reject(new Error(`Timeout: Pengiriman file gagal dalam ${timeoutMs/1000} detik`));
+                }, timeoutMs);
+
+                console.log(`⏱️  Mengirim file dengan timeout ${timeoutMs/1000} detik...`);
+                
+                client.sendMessage(to, media)
+                  .then((result) => {
+                    clearTimeout(timeout);
+                    console.log("✅ Operasi sendMessage berhasil");
+                    resolve(result);
+                  })
+                  .catch((error) => {
+                    clearTimeout(timeout);
+                    console.error("❌ Operasi sendMessage gagal:", error.message);
+                    reject(error);
+                  });
+              });
+            };
+
+            try {
+              sent = await sendWithTimeout(client, to, media, 120000); // 2 menit timeout
+              console.log(
+                `✅ File berhasil dikirim dengan ID: ${sent.id._serialized}`
+              );
+            } catch (sendError) {
+              console.error("❌ Error saat mengirim file:", sendError.message);
+              throw new Error(`Gagal mengirim file: ${sendError.message}`);
+            }
           } else {
             return res.status(400).json({
               error: 'Type harus "text" atau "file".',
@@ -856,9 +997,42 @@ const monitorResources = () => {
           res.json(response);
         } catch (e) {
           console.error("❌ Error in send-message:", e);
-          res.status(500).json({
+          
+          // Specific error messages untuk berbagai kasus
+          let errorMessage = "Gagal mengirim pesan";
+          let statusCode = 500;
+          
+          if (e.message.includes("Timeout")) {
+            errorMessage = "Pengiriman pesan timeout - coba lagi";
+            statusCode = 408;
+          } else if (e.message.includes("not registered")) {
+            errorMessage = "Nomor WhatsApp tidak terdaftar";
+            statusCode = 400;
+          } else if (e.message.includes("Chat not found")) {
+            errorMessage = "Chat tidak ditemukan - nomor mungkin tidak valid";
+            statusCode = 400;
+          } else if (e.message.includes("Session not ready")) {
+            errorMessage = "Sesi WhatsApp belum siap - scan QR code terlebih dahulu";
+            statusCode = 503;
+          } else if (e.message.includes("File too large")) {
+            errorMessage = `File terlalu besar - maksimal ${MAX_FILE_SIZE_MB}MB`;
+            statusCode = 413;
+          } else if (e.message.includes("Unsupported file type")) {
+            errorMessage = "Tipe file tidak didukung";
+            statusCode = 415;
+          } else if (e.message.includes("Browser crashed") || e.message.includes("Target closed")) {
+            errorMessage = "Browser WhatsApp crash - restart diperlukan";
+            statusCode = 503;
+          } else {
+            errorMessage = `Error: ${e.message}`;
+          }
+          
+          res.status(statusCode).json({
             status: "error",
-            message: e.message,
+            message: errorMessage,
+            mid: null,
+            from: null,
+            to: null,
             timestamp: new Date().toISOString(),
           });
         }
