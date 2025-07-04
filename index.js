@@ -936,6 +936,138 @@ const monitorResources = () => {
       }
     });
 
+    // Media diagnostics endpoint for troubleshooting upload issues
+    app.get("/media-diagnostics", async (req, res) => {
+      try {
+        console.log("🔍 MEDIA DIAGNOSTICS REQUEST");
+        
+        const diagnostics = {
+          timestamp: new Date().toISOString(),
+          client_status: {
+            initialized: !!client,
+            authenticated: !!(client && client.info),
+            ready: !!(client && client.info)
+          },
+          browser_status: {
+            available: false,
+            url: null,
+            title: null,
+            whatsapp_loaded: false
+          },
+          media_capabilities: {
+            message_media_class: typeof MessageMedia !== 'undefined',
+            can_create_media: false,
+            whatsapp_store_available: false,
+            media_upload_elements: {}
+          }
+        };
+
+        if (client) {
+          try {
+            const state = await client.getState();
+            diagnostics.client_status.state = state;
+            diagnostics.client_status.connected = state === "CONNECTED";
+          } catch (stateError) {
+            diagnostics.client_status.state_error = stateError.message;
+          }
+
+          if (client.pupPage) {
+            try {
+              diagnostics.browser_status.available = true;
+              diagnostics.browser_status.url = await client.pupPage.url();
+              diagnostics.browser_status.title = await client.pupPage.title();
+              
+              // Check WhatsApp Web specific elements
+              const whatsappCheck = await client.pupPage.evaluate(() => {
+                return {
+                  store_available: typeof window.Store !== 'undefined',
+                  wwebjs_available: typeof window.WWebJS !== 'undefined',
+                  clip_button: !!document.querySelector('[data-testid="clip"]'),
+                  media_input: !!document.querySelector('input[accept*="image"]'),
+                  chat_loaded: !!document.querySelector('[data-testid="conversation-panel"]')
+                };
+              });
+              
+              diagnostics.browser_status.whatsapp_loaded = whatsappCheck.store_available;
+              diagnostics.media_capabilities.whatsapp_store_available = whatsappCheck.store_available;
+              diagnostics.media_capabilities.media_upload_elements = whatsappCheck;
+              
+            } catch (browserError) {
+              diagnostics.browser_status.error = browserError.message;
+            }
+          }
+
+          // Test MessageMedia creation
+          try {
+            const testMedia = new MessageMedia('text/plain', 'dGVzdA==', 'test.txt');
+            diagnostics.media_capabilities.can_create_media = true;
+            diagnostics.media_capabilities.test_media_size = testMedia.data.length;
+          } catch (mediaError) {
+            diagnostics.media_capabilities.media_creation_error = mediaError.message;
+          }
+        }
+
+        res.json(diagnostics);
+      } catch (error) {
+        res.status(500).json({
+          error: "Media diagnostics failed",
+          message: error.message,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Quick text message test endpoint for debugging
+    app.post("/test-text", async (req, res) => {
+      try {
+        console.log("📝 QUICK TEXT TEST");
+        
+        const { to, message } = req.body;
+        
+        if (!to || !message) {
+          return res.status(400).json({
+            error: "Missing required fields",
+            required: ["to", "message"]
+          });
+        }
+
+        if (!client || !client.info) {
+          return res.status(503).json({
+            error: "WhatsApp client not connected"
+          });
+        }
+
+        const targetNumber = to.replace(/\D/g, "") + "@c.us";
+        const testMessage = `🧪 TEST: ${message}\nTimestamp: ${new Date().toISOString()}`;
+
+        console.log(`📤 Sending test message to ${targetNumber}`);
+        
+        const sent = await Promise.race([
+          client.sendMessage(targetNumber, testMessage),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Text message timeout")), 10000)
+          )
+        ]);
+
+        console.log("✅ Test message sent:", sent.id._serialized);
+
+        res.json({
+          status: "success",
+          message_id: sent.id._serialized,
+          to: targetNumber,
+          timestamp: new Date().toISOString()
+        });
+
+      } catch (error) {
+        console.error("❌ Text test failed:", error.message);
+        res.status(500).json({
+          error: "Text test failed",
+          message: error.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+
     // Test file upload endpoint dengan debugging yang lebih detail
     app.post("/test-upload", upload.single("file"), async (req, res) => {
       try {
@@ -1474,6 +1606,45 @@ const monitorResources = () => {
 
                 const title = await client.pupPage.title();
                 console.log("🌐 Page title:", title);
+
+                // Advanced browser diagnostics for media issues
+                console.log("🔍 ADVANCED: Checking WhatsApp Web media capabilities...");
+                try {
+                  // Check if WhatsApp Web has loaded properly
+                  const hasWhatsAppStore = await client.pupPage.evaluate(() => {
+                    return typeof window.Store !== 'undefined' && 
+                           typeof window.WWebJS !== 'undefined';
+                  });
+                  console.log("📱 WhatsApp Web Store loaded:", hasWhatsAppStore);
+
+                  // Check for any JavaScript errors in the browser console
+                  const jsErrors = await client.pupPage.evaluate(() => {
+                    const errors = window.console.errors || [];
+                    return errors.slice(-5); // Get last 5 errors
+                  });
+                  if (jsErrors.length > 0) {
+                    console.log("⚠️ Recent browser JS errors:", jsErrors);
+                  }
+
+                  // Check network connectivity within the browser
+                  const isOnline = await client.pupPage.evaluate(() => navigator.onLine);
+                  console.log("🌐 Browser reports online:", isOnline);
+
+                  // Check if media upload elements are present
+                  const hasMediaElements = await client.pupPage.evaluate(() => {
+                    const clipButton = document.querySelector('[data-testid="clip"]');
+                    const mediaInput = document.querySelector('input[accept="image/*,video/mp4,video/3gpp,video/quicktime"]');
+                    return {
+                      clipButton: !!clipButton,
+                      mediaInput: !!mediaInput,
+                      clipButtonVisible: clipButton ? !clipButton.hidden : false
+                    };
+                  });
+                  console.log("📎 Media upload elements:", hasMediaElements);
+
+                } catch (advancedDiagError) {
+                  console.warn("⚠️ Advanced diagnostics failed:", advancedDiagError.message);
+                }
               } else {
                 console.warn("⚠️ No browser page available");
               }
