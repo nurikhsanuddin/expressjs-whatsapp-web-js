@@ -3,10 +3,8 @@ const express = require("express");
 const multer = require("multer");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
-const puppeteer = require("puppeteer");
 const path = require("path");
 const fs = require("fs");
-const { exec } = require("child_process");
 
 const app = express();
 const upload = multer({
@@ -17,14 +15,14 @@ const upload = multer({
   },
 });
 
-// Tambah timeout untuk request yang lama (file upload)
+// Timeout untuk request yang lama
 app.use((req, res, next) => {
   req.setTimeout(300000); // 5 menit timeout
   res.setTimeout(300000); // 5 menit timeout
   next();
 });
 
-// Variable untuk menyimpan instance client dan QR code
+// Variables
 let client = null;
 let browserInstance = null;
 let currentQRCode = null;
@@ -39,18 +37,14 @@ const formatBytes = (bytes, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 };
 
-// Puppeteer configuration based on environment
+// Puppeteer configuration
 const getPuppeteerConfig = async () => {
-  const jsMemoryLimit = process.env.JS_MEMORY_LIMIT || "128";
-  const diskCacheSize = process.env.DISK_CACHE_SIZE || "1";
-
   const defaultArgs = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
     "--disable-accelerated-2d-canvas",
     "--no-first-run",
-    "--js-flags=--max-old-space-size=" + jsMemoryLimit,
     "--disable-extensions",
     "--disable-component-extensions-with-background-pages",
     "--disable-default-apps",
@@ -59,8 +53,6 @@ const getPuppeteerConfig = async () => {
     "--disable-renderer-backgrounding",
     "--disable-background-timer-throttling",
     "--disable-ipc-flooding-protection",
-    "--disk-cache-size=" + diskCacheSize,
-    "--media-cache-size=" + diskCacheSize,
   ];
 
   if (process.platform === "win32") {
@@ -71,7 +63,7 @@ const getPuppeteerConfig = async () => {
 
   const isHeadless = process.env.HEADLESS_MODE === "true";
 
-  const config = {
+  return {
     headless: isHeadless,
     args: defaultArgs,
     ignoreDefaultArgs: ["--enable-automation"],
@@ -83,13 +75,9 @@ const getPuppeteerConfig = async () => {
       deviceScaleFactor: 1,
     },
   };
-
-  // Headless mode configuration without logging
-
-  return config;
 };
 
-// Fungsi untuk graceful shutdown
+// Graceful shutdown
 const gracefulShutdown = async () => {
   console.log("Shutting down gracefully...");
 
@@ -128,7 +116,7 @@ const gracefulShutdown = async () => {
 process.on("SIGTERM", gracefulShutdown);
 process.on("SIGINT", gracefulShutdown);
 
-// Inisialisasi aplikasi dan WhatsApp client secara async
+// Initialize application
 (async () => {
   try {
     const puppeteerConfig = await getPuppeteerConfig();
@@ -140,12 +128,8 @@ process.on("SIGINT", gracefulShutdown);
 
     client.on("qr", (qr) => {
       currentQRCode = qr;
-      console.log("QR Code generated successfully!");
-      console.log("\n" + "=".repeat(60));
-      console.log("Scan QR code dengan WhatsApp di HP Anda");
-      console.log("=".repeat(60));
+      console.log("QR Code generated. Scan with WhatsApp:");
       qrcode.generate(qr, { small: true });
-      console.log("=".repeat(60));
     });
 
     client.on("ready", () => {
@@ -153,7 +137,7 @@ process.on("SIGINT", gracefulShutdown);
       if (client.pupPage && client.pupPage.browser) {
         browserInstance = client.pupPage.browser();
       }
-      console.log("WhatsApp ready! Connection established.");
+      console.log("WhatsApp ready!");
     });
 
     client.on("auth_failure", (msg) => {
@@ -171,22 +155,8 @@ process.on("SIGINT", gracefulShutdown);
       }
     });
 
-    client.on("loading_screen", (percent, message) => {
-      console.log(`Loading screen: ${percent}% - ${message}`);
-    });
-
-    client.on("authenticated", () => {
-      console.log("WhatsApp authenticated successfully");
-    });
-
-    try {
-      console.log("Initializing WhatsApp client...");
-      await client.initialize();
-      console.log("WhatsApp client initialization completed");
-    } catch (err) {
-      console.error("Failed to initialize WhatsApp client:");
-      console.error(err);
-    }
+    console.log("Initializing WhatsApp client...");
+    await client.initialize();
 
     // Middleware auth API key
     app.use((req, res, next) => {
@@ -196,7 +166,7 @@ process.on("SIGINT", gracefulShutdown);
       next();
     });
 
-    // QR Code endpoint untuk headless mode
+    // QR Code endpoint
     app.get("/qr", (req, res) => {
       if (!currentQRCode) {
         return res.status(404).json({
@@ -241,37 +211,13 @@ process.on("SIGINT", gracefulShutdown);
                 max-width: 100%;
                 height: auto;
               }
-              .instructions {
-                color: #666;
-                margin-top: 20px;
-                line-height: 1.5;
-              }
-              .refresh-btn {
-                background: #25D366;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                cursor: pointer;
-                margin-top: 15px;
-              }
-              .refresh-btn:hover {
-                background: #128C7E;
-              }
             </style>
           </head>
           <body>
             <div class="container">
               <h2>WhatsApp QR Code</h2>
               <img src="${url}" alt="WhatsApp QR Code" class="qr-code">
-              <div class="instructions">
-                <p><strong>Cara menggunakan:</strong></p>
-                <p>1. Buka WhatsApp di HP Anda</p>
-                <p>2. Tap menu ⋮ (titik tiga) → Perangkat Tertaut</p>
-                <p>3. Tap "Tautkan Perangkat"</p>
-                <p>4. Scan QR code di atas</p>
-              </div>
-              <button class="refresh-btn" onclick="location.reload()">Refresh</button>
+              <p>Scan QR code dengan WhatsApp di HP Anda</p>
             </div>
             <script>
               setTimeout(() => location.reload(), 30000);
@@ -287,110 +233,19 @@ process.on("SIGINT", gracefulShutdown);
     // Status endpoint
     app.get("/status", (req, res) => {
       const isConnected = client && client.info ? true : false;
-      const clientState = client
-        ? client.info
-          ? "ready"
-          : "initializing"
-        : "not_initialized";
-
       res.json({
         status: isConnected ? "connected" : "disconnected",
-        client_state: clientState,
-        qr_available: currentQRCode ? true : false,
         info: isConnected
           ? {
               phone: client.info.wid.user,
               name: client.info.pushname,
             }
           : null,
-        headless_mode: process.env.HEADLESS_MODE === "true",
+        qr_available: currentQRCode ? true : false,
       });
     });
 
-    // Debug endpoint untuk troubleshooting
-    app.get("/debug", (req, res) => {
-      const sessionPath = path.join(process.cwd(), ".wwebjs_auth");
-      const sessionExists = fs.existsSync(sessionPath);
-
-      let sessionInfo = null;
-      if (sessionExists) {
-        try {
-          const sessionFiles = fs.readdirSync(sessionPath);
-          sessionInfo = {
-            path: sessionPath,
-            files: sessionFiles.length,
-            fileList: sessionFiles.slice(0, 10), // Show first 10 files
-          };
-        } catch (err) {
-          sessionInfo = { error: err.message };
-        }
-      }
-
-      res.json({
-        timestamp: new Date().toISOString(),
-        client: {
-          exists: !!client,
-          ready: !!(client && client.info),
-          state: client
-            ? client.info
-              ? "ready"
-              : "initializing"
-            : "not_initialized",
-        },
-        qr: {
-          available: !!currentQRCode,
-          generated: currentQRCode ? "yes" : "no",
-        },
-        session: {
-          exists: sessionExists,
-          info: sessionInfo,
-        },
-        browser: {
-          instance: !!browserInstance,
-          connected: browserInstance ? browserInstance.isConnected() : false,
-        },
-      });
-    });
-
-    // Clear session endpoint (untuk troubleshooting)
-    app.post("/clear-session", async (req, res) => {
-      try {
-        const sessionPath = path.join(process.cwd(), ".wwebjs_auth");
-
-        if (fs.existsSync(sessionPath)) {
-          // Force close client first
-          if (client) {
-            try {
-              await client.destroy();
-            } catch (err) {
-              console.warn("Error destroying client:", err.message);
-            }
-          }
-
-          // Remove session directory
-          fs.rmSync(sessionPath, { recursive: true, force: true });
-          console.log("Session cleared successfully");
-
-          res.json({
-            success: true,
-            message:
-              "Session cleared. Please restart the server to generate new QR code.",
-          });
-        } else {
-          res.json({
-            success: false,
-            message: "No session found to clear",
-          });
-        }
-      } catch (error) {
-        res.status(500).json({
-          success: false,
-          error: error.message,
-        });
-      }
-    });
-
-    // Main send-message endpoint
+    // Send message endpoint
     app.post(
       "/send-message",
       (req, res, next) => {
@@ -421,8 +276,6 @@ process.on("SIGINT", gracefulShutdown);
       },
       async (req, res) => {
         try {
-          console.log("Processing send-message request");
-
           const meta = req.body.meta
             ? typeof req.body.meta === "string"
               ? JSON.parse(req.body.meta)
@@ -441,11 +294,6 @@ process.on("SIGINT", gracefulShutdown);
           const to = meta.to.replace(/\D/g, "") + "@c.us";
 
           if (!client || !client.info) {
-            console.log("WhatsApp client status:", {
-              client_exists: !!client,
-              client_info: !!client?.info,
-              qr_code_available: !!currentQRCode,
-            });
             return res.status(503).json({
               error: "WhatsApp client tidak terhubung",
               message: "Silakan scan QR code terlebih dahulu",
@@ -461,6 +309,7 @@ process.on("SIGINT", gracefulShutdown);
           }
 
           let sent;
+
           if (meta.type === "text") {
             if (!meta.content) {
               return res.status(400).json({
@@ -500,7 +349,7 @@ process.on("SIGINT", gracefulShutdown);
               });
             }
 
-            // Send file as document
+            // Verify WhatsApp connection
             try {
               const state = await client.getState();
               if (state !== "CONNECTED") {
@@ -512,7 +361,7 @@ process.on("SIGINT", gracefulShutdown);
               );
             }
 
-            // Enhanced timeout wrapper
+            // Send with timeout
             const sendWithTimeout = (
               client,
               to,
@@ -565,7 +414,7 @@ process.on("SIGINT", gracefulShutdown);
             };
 
             try {
-              // UNIVERSAL DOCUMENT APPROACH - Mengirim semua file sebagai dokumen
+              // Send all files as documents for maximum reliability
               const mediaToSend = new MessageMedia(
                 req.file.mimetype,
                 req.file.buffer.toString("base64"),
@@ -584,7 +433,7 @@ process.on("SIGINT", gracefulShutdown);
                 sendOptions
               );
             } catch (sendError) {
-              // Retry dengan approach minimal
+              // Retry with simplified approach
               if (
                 sendError.message.includes("timeout") ||
                 sendError.message.includes("Timeout")
@@ -658,7 +507,7 @@ process.on("SIGINT", gracefulShutdown);
 
           res.json(response);
         } catch (e) {
-          console.error("Error in send-message:", e);
+          console.error("Error in send-message:", e.message);
 
           let errorMessage = "Gagal mengirim pesan";
           let statusCode = 500;
