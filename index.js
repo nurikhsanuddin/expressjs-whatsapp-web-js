@@ -63,7 +63,7 @@ const getPuppeteerConfig = async () => {
 
   const isHeadless = process.env.HEADLESS_MODE === "true";
 
-  return {
+  const config = {
     headless: isHeadless,
     args: defaultArgs,
     ignoreDefaultArgs: ["--enable-automation"],
@@ -75,6 +75,51 @@ const getPuppeteerConfig = async () => {
       deviceScaleFactor: 1,
     },
   };
+
+  // Try to find available browser executable
+  const possibleBrowserPaths = [
+    process.env.CHROME_PATH,
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/snap/bin/chromium",
+    "/usr/bin/chrome",
+  ].filter(Boolean);
+
+  // Windows specific paths
+  if (process.platform === "win32") {
+    possibleBrowserPaths.push(
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+    );
+  }
+
+  // Check if any browser path exists
+  for (const browserPath of possibleBrowserPaths) {
+    if (browserPath && fs.existsSync(browserPath)) {
+      config.executablePath = browserPath;
+      console.log(`Using browser: ${browserPath}`);
+      break;
+    }
+  }
+
+  // If no browser found, try to use puppeteer's bundled chromium
+  if (!config.executablePath) {
+    try {
+      const puppeteer = require("puppeteer");
+      config.executablePath = puppeteer.executablePath();
+      console.log("Using Puppeteer bundled Chromium");
+    } catch (err) {
+      console.warn(
+        "Could not find browser executable. Trying without executablePath..."
+      );
+      // Let puppeteer handle it
+    }
+  }
+
+  return config;
 };
 
 // Graceful shutdown
