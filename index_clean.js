@@ -84,43 +84,51 @@ const getPuppeteerConfig = async () => {
     },
   };
 
-  // Headless mode configuration without logging
+  if (isHeadless) {
+    console.log(
+      "🔕 HEADLESS MODE: Browser akan berjalan tanpa tampilan visual"
+    );
+  } else {
+    console.log("🌐 BROWSER MODE: Browser window akan terbuka");
+  }
 
   return config;
 };
 
 // Fungsi untuk graceful shutdown
 const gracefulShutdown = async () => {
-  console.log("Shutting down gracefully...");
+  console.log("🛑 Shutting down gracefully...");
 
   const shutdownPromise = Promise.race([
     (async () => {
       if (client) {
         try {
           await client.destroy();
+          console.log("✅ WhatsApp client destroyed");
         } catch (err) {
-          console.warn("Error destroying client:", err.message);
+          console.warn("⚠️ Error destroying client:", err.message);
         }
       }
 
       if (browserInstance) {
         try {
           await browserInstance.close();
+          console.log("✅ Browser closed");
         } catch (err) {
-          console.warn("Error closing browser:", err.message);
+          console.warn("⚠️ Error closing browser:", err.message);
         }
       }
     })(),
     new Promise((resolve) =>
       setTimeout(() => {
-        console.log("Shutdown timed out, forcing exit...");
+        console.log("⚠️ Shutdown timed out, forcing exit...");
         resolve();
       }, 5000)
     ),
   ]);
 
   await shutdownPromise;
-  console.log("Shutdown complete");
+  console.log("👍 Shutdown complete");
   process.exit(0);
 };
 
@@ -141,10 +149,24 @@ process.on("SIGINT", gracefulShutdown);
     client.on("qr", (qr) => {
       currentQRCode = qr;
       console.log("\n" + "=".repeat(60));
-      console.log("Scan QR code dengan WhatsApp di HP Anda");
+      if (process.env.HEADLESS_MODE === "true") {
+        console.log("🔍 HEADLESS MODE AKTIF - QR Code ditampilkan di terminal");
+        console.log("📱 Scan QR code di bawah ini dengan WhatsApp di HP Anda:");
+        console.log(
+          "🌐 Atau akses http://localhost:" +
+            (process.env.PORT || 3626) +
+            "/qr untuk melihat QR code di browser"
+        );
+      } else {
+        console.log(
+          "🌐 Browser mode aktif - QR code akan muncul di browser DAN terminal"
+        );
+        console.log("📱 Scan QR code dengan WhatsApp di HP Anda:");
+      }
       console.log("=".repeat(60));
       qrcode.generate(qr, { small: true });
       console.log("=".repeat(60));
+      console.log("⏳ Menunggu scan QR code...\n");
     });
 
     client.on("ready", () => {
@@ -152,14 +174,14 @@ process.on("SIGINT", gracefulShutdown);
       if (client.pupPage && client.pupPage.browser) {
         browserInstance = client.pupPage.browser();
       }
-      console.log("WhatsApp ready!");
+      console.log("✅ WhatsApp ready!");
     });
 
     client.on("auth_failure", (msg) =>
-      console.error(`Authentication failed: ${msg}`)
+      console.error(`⚠️ WhatsApp authentication failed: ${msg}`)
     );
     client.on("disconnected", (reason) => {
-      console.log(`WhatsApp disconnected: ${reason}`);
+      console.log(`🔌 WhatsApp disconnected: ${reason}`);
       if (browserInstance) {
         try {
           browserInstance.close();
@@ -319,7 +341,7 @@ process.on("SIGINT", gracefulShutdown);
       },
       async (req, res) => {
         try {
-          console.log("Received send-message request");
+          console.log("📬 Received send-message request");
 
           const meta = req.body.meta
             ? typeof req.body.meta === "string"
@@ -360,6 +382,7 @@ process.on("SIGINT", gracefulShutdown);
                 error: "Content text tidak boleh kosong",
               });
             }
+            console.log(`💬 Mengirim pesan teks ke ${meta.to}`);
             sent = await client.sendMessage(to, meta.content);
           } else if (meta.type === "file") {
             if (!req.file) {
@@ -393,7 +416,13 @@ process.on("SIGINT", gracefulShutdown);
               });
             }
 
-            // Send file as document
+            console.log(
+              `📤 Mengirim file: ${req.file.originalname} (${formatBytes(
+                req.file.size
+              )})`
+            );
+
+            // Verifikasi koneksi WhatsApp sebelum mengirim file
             try {
               const state = await client.getState();
               if (state !== "CONNECTED") {
@@ -477,7 +506,13 @@ process.on("SIGINT", gracefulShutdown);
                 30000,
                 sendOptions
               );
+
+              console.log(
+                `✅ File berhasil dikirim sebagai dokumen dengan ID: ${sent.id._serialized}`
+              );
             } catch (sendError) {
+              console.error("❌ Document send failed:", sendError.message);
+
               // Retry dengan approach minimal
               if (
                 sendError.message.includes("timeout") ||
@@ -501,6 +536,8 @@ process.on("SIGINT", gracefulShutdown);
                     20000,
                     simpleOptions
                   );
+
+                  console.log("✅ Retry berhasil:", sent.id._serialized);
                 } catch (retryError) {
                   // Final fallback to text notification
                   try {
@@ -521,6 +558,8 @@ process.on("SIGINT", gracefulShutdown);
                         )
                       ),
                     ]);
+
+                    console.log("📝 Fallback text sent:", sent.id._serialized);
                   } catch (fallbackError) {
                     throw new Error(
                       `Total failure: ${sendError.message}, ${retryError.message}, ${fallbackError.message}`
@@ -552,7 +591,7 @@ process.on("SIGINT", gracefulShutdown);
 
           res.json(response);
         } catch (e) {
-          console.error("Error in send-message:", e);
+          console.error("❌ Error in send-message:", e);
 
           let errorMessage = "Gagal mengirim pesan";
           let statusCode = 500;
@@ -589,10 +628,16 @@ process.on("SIGINT", gracefulShutdown);
     // Start server
     const PORT = process.env.PORT || 3626;
     const server = app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(`🚀 Running on http://localhost:${PORT}`);
+
+      if (process.env.HEADLESS_MODE === "true") {
+        console.log(`🔗 QR Code endpoint: http://localhost:${PORT}/qr`);
+        console.log(`📊 Status endpoint: http://localhost:${PORT}/status`);
+      }
 
       if (process.send) {
         process.send("ready");
+        console.log("📣 Sent ready signal to PM2");
       }
     });
 
