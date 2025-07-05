@@ -140,6 +140,7 @@ process.on("SIGINT", gracefulShutdown);
 
     client.on("qr", (qr) => {
       currentQRCode = qr;
+      console.log("QR Code generated successfully!");
       console.log("\n" + "=".repeat(60));
       console.log("Scan QR code dengan WhatsApp di HP Anda");
       console.log("=".repeat(60));
@@ -155,9 +156,10 @@ process.on("SIGINT", gracefulShutdown);
       console.log("WhatsApp ready! Connection established.");
     });
 
-    client.on("auth_failure", (msg) =>
-      console.error(`Authentication failed: ${msg}`)
-    );
+    client.on("auth_failure", (msg) => {
+      console.error(`Authentication failed: ${msg}`);
+    });
+
     client.on("disconnected", (reason) => {
       console.log(`WhatsApp disconnected: ${reason}`);
       if (browserInstance) {
@@ -167,6 +169,14 @@ process.on("SIGINT", gracefulShutdown);
           console.warn("Error closing browser:", err.message);
         }
       }
+    });
+
+    client.on("loading_screen", (percent, message) => {
+      console.log(`Loading screen: ${percent}% - ${message}`);
+    });
+
+    client.on("authenticated", () => {
+      console.log("WhatsApp authenticated successfully");
     });
 
     try {
@@ -295,6 +305,89 @@ process.on("SIGINT", gracefulShutdown);
           : null,
         headless_mode: process.env.HEADLESS_MODE === "true",
       });
+    });
+
+    // Debug endpoint untuk troubleshooting
+    app.get("/debug", (req, res) => {
+      const sessionPath = path.join(process.cwd(), ".wwebjs_auth");
+      const sessionExists = fs.existsSync(sessionPath);
+
+      let sessionInfo = null;
+      if (sessionExists) {
+        try {
+          const sessionFiles = fs.readdirSync(sessionPath);
+          sessionInfo = {
+            path: sessionPath,
+            files: sessionFiles.length,
+            fileList: sessionFiles.slice(0, 10), // Show first 10 files
+          };
+        } catch (err) {
+          sessionInfo = { error: err.message };
+        }
+      }
+
+      res.json({
+        timestamp: new Date().toISOString(),
+        client: {
+          exists: !!client,
+          ready: !!(client && client.info),
+          state: client
+            ? client.info
+              ? "ready"
+              : "initializing"
+            : "not_initialized",
+        },
+        qr: {
+          available: !!currentQRCode,
+          generated: currentQRCode ? "yes" : "no",
+        },
+        session: {
+          exists: sessionExists,
+          info: sessionInfo,
+        },
+        browser: {
+          instance: !!browserInstance,
+          connected: browserInstance ? browserInstance.isConnected() : false,
+        },
+      });
+    });
+
+    // Clear session endpoint (untuk troubleshooting)
+    app.post("/clear-session", async (req, res) => {
+      try {
+        const sessionPath = path.join(process.cwd(), ".wwebjs_auth");
+
+        if (fs.existsSync(sessionPath)) {
+          // Force close client first
+          if (client) {
+            try {
+              await client.destroy();
+            } catch (err) {
+              console.warn("Error destroying client:", err.message);
+            }
+          }
+
+          // Remove session directory
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+          console.log("Session cleared successfully");
+
+          res.json({
+            success: true,
+            message:
+              "Session cleared. Please restart the server to generate new QR code.",
+          });
+        } else {
+          res.json({
+            success: false,
+            message: "No session found to clear",
+          });
+        }
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
+      }
     });
 
     // Main send-message endpoint
