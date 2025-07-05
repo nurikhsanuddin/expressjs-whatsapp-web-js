@@ -37,14 +37,57 @@ const formatBytes = (bytes, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 };
 
+// Session cleanup function
+const cleanupSessionFiles = async () => {
+  try {
+    const sessionDir = path.join(process.cwd(), ".wwebjs_auth");
+
+    if (fs.existsSync(sessionDir)) {
+      console.log("Cleaning up old session files...");
+
+      const now = Date.now();
+      const maxAgeInDays = 7;
+      const maxAgeInMs = maxAgeInDays * 24 * 60 * 60 * 1000;
+
+      const cleanupPaths = [
+        path.join(sessionDir, "session", "Default", "Cache"),
+        path.join(sessionDir, "session", "Default", "Code Cache"),
+        path.join(sessionDir, "session", "Default", "GPUCache"),
+        path.join(sessionDir, "session", "Default", "Service Worker"),
+      ];
+
+      for (const cleanupPath of cleanupPaths) {
+        if (fs.existsSync(cleanupPath)) {
+          try {
+            const stats = fs.statSync(cleanupPath);
+            if (now - stats.mtime.getTime() > maxAgeInMs) {
+              fs.rmSync(cleanupPath, { recursive: true, force: true });
+              console.log(`Cleaned: ${cleanupPath}`);
+            }
+          } catch (err) {
+            console.warn(`Error cleaning ${cleanupPath}:`, err.message);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error during session cleanup:", err.message);
+  }
+};
+
 // Puppeteer configuration
 const getPuppeteerConfig = async () => {
+  // Get optimization settings from environment
+  const jsMemoryLimit = process.env.JS_MEMORY_LIMIT || "128";
+  const diskCacheSize = process.env.DISK_CACHE_SIZE || "1";
+
   const defaultArgs = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
     "--disable-accelerated-2d-canvas",
     "--no-first-run",
+    "--js-flags=--max-old-space-size=" + jsMemoryLimit, // Memory limit from env
     "--disable-extensions",
     "--disable-component-extensions-with-background-pages",
     "--disable-default-apps",
@@ -53,13 +96,52 @@ const getPuppeteerConfig = async () => {
     "--disable-renderer-backgrounding",
     "--disable-background-timer-throttling",
     "--disable-ipc-flooding-protection",
+    "--disk-cache-size=" + diskCacheSize, // Disk cache limit from env
+    "--media-cache-size=" + diskCacheSize, // Media cache limit from env
   ];
 
   if (process.platform === "win32") {
     defaultArgs.push("--disable-features=VizDisplayCompositor");
   } else {
     defaultArgs.push("--no-zygote");
+    // Use single process if enabled in environment
+    if (process.env.USE_SINGLE_PROCESS === "true") {
+      defaultArgs.push("--single-process");
+    }
   }
+
+  // Add memory cache optimization if enabled
+  if (process.env.USE_MEMORY_CACHE === "true") {
+    defaultArgs.push("--disk-cache-size=1");
+    defaultArgs.push("--media-cache-size=1");
+    defaultArgs.push("--disk-cache-dir=/dev/null");
+  }
+
+  // Disable spellcheck if enabled
+  if (process.env.DISABLE_SPELLCHECK === "true") {
+    defaultArgs.push("--disable-spell-checking");
+  }
+
+  // Disable GPU if configured
+  if (process.env.DISABLE_GPU === "true") {
+    defaultArgs.push("--disable-gpu");
+  }
+
+  // Disable images and sounds if configured
+  if (process.env.DISABLE_IMAGES === "true") {
+    defaultArgs.push("--blink-settings=imagesEnabled=false");
+  }
+
+  if (process.env.DISABLE_SOUNDS === "true") {
+    defaultArgs.push("--mute-audio");
+  }
+
+  // Additional optimizations
+  defaultArgs.push("--disable-hang-monitor");
+  defaultArgs.push("--disable-crash-reporter");
+  defaultArgs.push("--renderer-process-limit=1");
+  defaultArgs.push("--disable-translate");
+  defaultArgs.push("--disable-sync");
 
   const isHeadless = process.env.HEADLESS_MODE === "true";
 
@@ -593,6 +675,24 @@ process.on("SIGINT", gracefulShutdown);
 
       if (process.send) {
         process.send("ready");
+      }
+
+      // Auto-cleanup session if enabled
+      if (process.env.AUTO_CLEAN_SESSION === "true") {
+        console.log("Auto-cleanup session enabled");
+
+        // Cleanup immediately on startup
+        cleanupSessionFiles();
+
+        // Set interval for periodic cleanup
+        const cleanupInterval =
+          parseInt(process.env.SESSION_CLEANUP_INTERVAL) || 21600000; // Default 6 hours
+        setInterval(cleanupSessionFiles, cleanupInterval);
+        console.log(
+          `Session cleanup scheduled every ${
+            cleanupInterval / (60 * 60 * 1000)
+          } hours`
+        );
       }
     });
 

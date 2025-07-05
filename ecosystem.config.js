@@ -13,9 +13,9 @@ module.exports = {
       },
       // Optimasi PM2 untuk Ubuntu server
       node_args: "--max-old-space-size=128 --gc-interval=100",
-      kill_timeout: 5000,
-      wait_ready: true,
-      listen_timeout: 10000,
+      kill_timeout: 5000, // Sinkron dengan gracefulShutdown timeout
+      wait_ready: true, // Menunggu process.send("ready") dari index.js
+      listen_timeout: 15000, // Diperpanjang untuk WhatsApp initialization
       max_restarts: 5,
       min_uptime: "30s",
       exec_mode: "fork",
