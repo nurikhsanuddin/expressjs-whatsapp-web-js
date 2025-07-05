@@ -152,7 +152,7 @@ process.on("SIGINT", gracefulShutdown);
       if (client.pupPage && client.pupPage.browser) {
         browserInstance = client.pupPage.browser();
       }
-      console.log("WhatsApp ready!");
+      console.log("WhatsApp ready! Connection established.");
     });
 
     client.on("auth_failure", (msg) =>
@@ -170,7 +170,9 @@ process.on("SIGINT", gracefulShutdown);
     });
 
     try {
+      console.log("Initializing WhatsApp client...");
       await client.initialize();
+      console.log("WhatsApp client initialization completed");
     } catch (err) {
       console.error("Failed to initialize WhatsApp client:");
       console.error(err);
@@ -250,7 +252,7 @@ process.on("SIGINT", gracefulShutdown);
           </head>
           <body>
             <div class="container">
-              <h2>📱 WhatsApp QR Code</h2>
+              <h2>WhatsApp QR Code</h2>
               <img src="${url}" alt="WhatsApp QR Code" class="qr-code">
               <div class="instructions">
                 <p><strong>Cara menggunakan:</strong></p>
@@ -259,7 +261,7 @@ process.on("SIGINT", gracefulShutdown);
                 <p>3. Tap "Tautkan Perangkat"</p>
                 <p>4. Scan QR code di atas</p>
               </div>
-              <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
+              <button class="refresh-btn" onclick="location.reload()">Refresh</button>
             </div>
             <script>
               setTimeout(() => location.reload(), 30000);
@@ -274,16 +276,23 @@ process.on("SIGINT", gracefulShutdown);
 
     // Status endpoint
     app.get("/status", (req, res) => {
-      const isConnected = client.info ? true : false;
+      const isConnected = client && client.info ? true : false;
+      const clientState = client
+        ? client.info
+          ? "ready"
+          : "initializing"
+        : "not_initialized";
+
       res.json({
         status: isConnected ? "connected" : "disconnected",
+        client_state: clientState,
+        qr_available: currentQRCode ? true : false,
         info: isConnected
           ? {
               phone: client.info.wid.user,
               name: client.info.pushname,
             }
           : null,
-        qr_available: currentQRCode ? true : false,
         headless_mode: process.env.HEADLESS_MODE === "true",
       });
     });
@@ -319,7 +328,7 @@ process.on("SIGINT", gracefulShutdown);
       },
       async (req, res) => {
         try {
-          console.log("Received send-message request");
+          console.log("Processing send-message request");
 
           const meta = req.body.meta
             ? typeof req.body.meta === "string"
@@ -339,6 +348,11 @@ process.on("SIGINT", gracefulShutdown);
           const to = meta.to.replace(/\D/g, "") + "@c.us";
 
           if (!client || !client.info) {
+            console.log("WhatsApp client status:", {
+              client_exists: !!client,
+              client_info: !!client?.info,
+              qr_code_available: !!currentQRCode,
+            });
             return res.status(503).json({
               error: "WhatsApp client tidak terhubung",
               message: "Silakan scan QR code terlebih dahulu",
@@ -467,7 +481,6 @@ process.on("SIGINT", gracefulShutdown);
 
               const sendOptions = {
                 sendMediaAsDocument: true,
-                caption: `📎 ${req.file.originalname}`,
               };
 
               sent = await sendWithTimeout(
@@ -505,12 +518,12 @@ process.on("SIGINT", gracefulShutdown);
                   // Final fallback to text notification
                   try {
                     const fallbackMessage =
-                      `📎 File Upload Notification\n\n` +
-                      `📄 Filename: ${req.file.originalname}\n` +
-                      `📊 Size: ${formatBytes(req.file.size)}\n` +
-                      `🏷️ Type: ${req.file.mimetype}\n` +
-                      `❌ Status: Upload failed\n` +
-                      `🕐 Timestamp: ${new Date().toLocaleString()}`;
+                      `File Upload Failed\n\n` +
+                      `Filename: ${req.file.originalname}\n` +
+                      `Size: ${formatBytes(req.file.size)}\n` +
+                      `Type: ${req.file.mimetype}\n` +
+                      `Status: Upload failed\n` +
+                      `Time: ${new Date().toLocaleString()}`;
 
                     sent = await Promise.race([
                       client.sendMessage(to, fallbackMessage),
