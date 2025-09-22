@@ -71,6 +71,11 @@ install_dependencies() {
   # Instal dependensi Node.js
   print_message "Menginstal dependensi Node.js..."
   npm install
+  
+  # Install express-rate-limit untuk security enhancement
+  print_message "Menginstal dependensi keamanan..."
+  npm install express-rate-limit
+  
   print_message "Dependensi Node.js terinstal."
   
   # Instal PM2 secara global jika belum ada
@@ -141,6 +146,7 @@ show_help() {
   echo "  status      - Periksa status aplikasi"
   echo "  logs        - Tampilkan log aplikasi (berguna untuk melihat QR code)"
   echo "  cleanup     - Bersihkan file cache sesi"
+  echo "  backup      - Backup session files penting"
   echo "  monitor     - Monitor penggunaan sumber daya"
   echo "  help        - Tampilkan bantuan ini"
 }
@@ -149,6 +155,12 @@ show_help() {
 cleanup() {
   print_message "Membersihkan file cache sesi..."
   node utils.js cleanup
+}
+
+# Backup session files
+backup_session() {
+  print_message "Backup session files..."
+  node utils.js backup
 }
 
 # Memonitor penggunaan sumber daya
@@ -181,6 +193,9 @@ main() {
       ;;
     "cleanup")
       cleanup
+      ;;
+    "backup")
+      backup_session
       ;;
     "monitor")
       monitor_resources

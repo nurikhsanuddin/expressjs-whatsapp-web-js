@@ -14,6 +14,9 @@ importers:
       express:
         specifier: ^5.1.0
         version: 5.1.0
+      express-rate-limit:
+        specifier: ^7.5.1
+        version: 7.5.1(express@5.1.0)
       multer:
         specifier: ^1.4.5-lts.2
         version: 1.4.5-lts.2
@@ -33,8 +36,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       whatsapp-web.js:
-        specifier: ^1.31.0
-        version: 1.31.0
+        specifier: ^1.34.1
+        version: 1.34.1
 
 packages:
 
@@ -411,6 +414,12 @@ packages:
   etag@1.8.1:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
+
+  express-rate-limit@7.5.1:
+    resolution: {integrity: sha512-7iN8iPMDzOMHPUYllBEsQdWVB6fPDMPqwjBaFrgr4Jgr/+okjvzAy+UHlYYL/Vs0OsOrMkwS6PJDkFlJwoxUnw==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
 
   express@5.1.0:
     resolution: {integrity: sha512-DT9ck5YIRU+8GYzzU5kT3eHGA5iL+1Zd0EutOmTE9Dtk+Tvuzd23VBU+ec7HPNSTxXYO55gPV/hq4pSBJDjFpA==}
@@ -1078,8 +1087,8 @@ packages:
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
-  whatsapp-web.js@1.31.0:
-    resolution: {integrity: sha512-oUfrgSx7s906flFmATA0Hqb8DJYv0tdB28KMQ7dWiua8NqcO1+8IFHE278YvSuFkBqRqH+fSfQrGmwh/4Mx/LQ==}
+  whatsapp-web.js@1.34.1:
+    resolution: {integrity: sha512-IInGEg+F8wB9M+c61KXGZ4bpwq24ew9EgsyMYxUZ/4CQ8GW/afsGseQO4FZriQ16qpu14pFovsD6YrEYxRbyLw==}
     engines: {node: '>=18.0.0'}
 
   whatwg-url@5.0.0:
@@ -1563,6 +1572,10 @@ snapshots:
   esutils@2.0.3: {}
 
   etag@1.8.1: {}
+
+  express-rate-limit@7.5.1(express@5.1.0):
+    dependencies:
+      express: 5.1.0
 
   express@5.1.0:
     dependencies:
@@ -2391,7 +2404,7 @@ snapshots:
 
   webidl-conversions@3.0.1: {}
 
-  whatsapp-web.js@1.31.0:
+  whatsapp-web.js@1.34.1:
     dependencies:
       '@pedroslopez/moduleraid': 5.0.2
       fluent-ffmpeg: 2.1.3
