@@ -248,8 +248,26 @@ process.on("SIGINT", gracefulShutdown);
   try {
     const puppeteerConfig = await getPuppeteerConfig();
 
+    // Check if session directory exists
+    const sessionDir = path.join(process.cwd(), ".wwebjs_auth");
+    const sessionExists = fs.existsSync(sessionDir);
+    console.log(`Session directory exists: ${sessionExists}`);
+    if (sessionExists) {
+      console.log(`Session path: ${sessionDir}`);
+      // List session contents
+      try {
+        const sessionContents = fs.readdirSync(sessionDir);
+        console.log(`Session contents:`, sessionContents);
+      } catch (err) {
+        console.warn(`Could not read session directory:`, err.message);
+      }
+    }
+
     client = new Client({
-      authStrategy: new LocalAuth(),
+      authStrategy: new LocalAuth({
+        clientId: "client-one",
+        dataPath: "./.wwebjs_auth"
+      }),
       puppeteer: puppeteerConfig,
     });
 
@@ -257,6 +275,10 @@ process.on("SIGINT", gracefulShutdown);
       currentQRCode = qr;
       console.log("QR Code generated. Scan with WhatsApp:");
       qrcode.generate(qr, { small: true });
+    });
+
+    client.on("authenticated", () => {
+      console.log("WhatsApp authenticated! (Session loaded or QR scanned)");
     });
 
     client.on("ready", () => {
@@ -291,6 +313,44 @@ process.on("SIGINT", gracefulShutdown);
         return res.status(401).json({ error: "Unauthorized" });
       }
       next();
+    });
+
+    // Logout endpoint - force delete session
+    app.post("/logout", async (req, res) => {
+      try {
+        console.log("Logout requested - destroying session...");
+        
+        // Destroy client
+        if (client) {
+          await client.destroy();
+        }
+        
+        // Delete session directory
+        const sessionDir = path.join(process.cwd(), ".wwebjs_auth");
+        if (fs.existsSync(sessionDir)) {
+          console.log(`Deleting session directory: ${sessionDir}`);
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+          console.log("Session directory deleted");
+        }
+        
+        res.json({
+          status: "success",
+          message: "Session destroyed. Restart aplikasi untuk scan QR baru."
+        });
+        
+        // Exit after 2 seconds to force restart
+        setTimeout(() => {
+          console.log("Exiting to force restart...");
+          process.exit(0);
+        }, 2000);
+        
+      } catch (error) {
+        console.error("Error during logout:", error);
+        res.status(500).json({
+          error: "Logout failed",
+          message: error.message
+        });
+      }
     });
 
     // QR Code endpoint
