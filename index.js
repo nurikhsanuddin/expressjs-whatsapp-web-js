@@ -437,6 +437,26 @@ process.on("SIGINT", gracefulShutdown);
 
           let sent;
 
+          // Ensure chat exists before sending
+          let chat;
+          try {
+            // Try to get existing chat
+            chat = await client.getChatById(to);
+          } catch (chatError) {
+            // If chat doesn't exist, try to get number info first
+            try {
+              const numberCheck = await client.getNumberId(to.replace('@c.us', ''));
+              if (!numberCheck) {
+                return res.status(400).json({
+                  error: "Nomor WhatsApp tidak terdaftar",
+                  to: meta.to
+                });
+              }
+            } catch (numberError) {
+              console.warn("Could not verify number:", numberError.message);
+            }
+          }
+
           if (meta.type === "text") {
             if (!meta.content) {
               return res.status(400).json({
@@ -652,6 +672,9 @@ process.on("SIGINT", gracefulShutdown);
             errorMessage =
               "Sesi WhatsApp belum siap - scan QR code terlebih dahulu";
             statusCode = 503;
+          } else if (e.message.includes("markedUnread") || e.message.includes("Cannot read properties of undefined")) {
+            errorMessage = "Chat tidak ditemukan atau belum tersedia - coba kirim pesan manual terlebih dahulu";
+            statusCode = 400;
           } else {
             errorMessage = `Error: ${e.message}`;
           }
