@@ -251,8 +251,25 @@ process.on("SIGINT", gracefulShutdown);
     // Check if session directory exists
     const sessionDir = path.join(process.cwd(), ".wwebjs_auth");
     const sessionExists = fs.existsSync(sessionDir);
+    
+    console.log("=".repeat(60));
+    console.log("SESSION CHECK:");
+    console.log(`Working directory: ${process.cwd()}`);
+    console.log(`Session directory path: ${sessionDir}`);
     console.log(`Session directory exists: ${sessionExists}`);
-    if (sessionExists) {
+    
+    // Force delete session if FORCE_NEW_SESSION=true
+    if (process.env.FORCE_NEW_SESSION === "true" && sessionExists) {
+      console.log("FORCE_NEW_SESSION=true detected!");
+      console.log("Deleting existing session...");
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        console.log("Session deleted successfully!");
+      } catch (err) {
+        console.error("Error deleting session:", err.message);
+      }
+    } else if (sessionExists) {
+      console.log("EXISTING SESSION FOUND - Will auto-login");
       console.log(`Session path: ${sessionDir}`);
       // List session contents
       try {
@@ -261,7 +278,10 @@ process.on("SIGINT", gracefulShutdown);
       } catch (err) {
         console.warn(`Could not read session directory:`, err.message);
       }
+    } else {
+      console.log("NO SESSION FOUND - QR code will be generated");
     }
+    console.log("=".repeat(60));
 
     client = new Client({
       authStrategy: new LocalAuth({
